@@ -6,6 +6,7 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
 import com.nisovin.shopkeepers.api.ShopkeepersPlugin;
+import com.nisovin.shopkeepers.SKShopkeepersPlugin;
 import com.nisovin.shopkeepers.api.shopkeeper.Shopkeeper;
 import com.nisovin.shopkeepers.api.ui.DefaultUITypes;
 import com.nisovin.shopkeepers.commands.arguments.ShopkeeperArgument;
@@ -59,6 +60,8 @@ class CommandRemote extends Command {
 
 		// Try to open the shop trading window:
 		// Fails if the user does not have the permission to trade with the shop.
-		shopkeeper.openTradingWindow(targetPlayer);
+		SKShopkeepersPlugin.getInstance().getShopkeeperRegistry().runOnSender(targetPlayer, () -> {
+			if (shopkeeper.isValid()) shopkeeper.openTradingWindow(targetPlayer);
+		});
 	}
 }

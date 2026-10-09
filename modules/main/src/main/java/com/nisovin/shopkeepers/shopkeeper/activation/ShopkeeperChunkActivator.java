@@ -1,12 +1,13 @@
 package com.nisovin.shopkeepers.shopkeeper.activation;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 
 import org.bukkit.Bukkit;
@@ -16,7 +17,6 @@ import org.bukkit.Server;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
 import org.bukkit.event.HandlerList;
-import org.bukkit.scheduler.BukkitTask;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import com.nisovin.shopkeepers.SKShopkeepersPlugin;
@@ -28,11 +28,13 @@ import com.nisovin.shopkeepers.shopkeeper.registry.SKShopkeeperRegistry;
 import com.nisovin.shopkeepers.shopkeeper.spawning.ShopkeeperSpawner;
 import com.nisovin.shopkeepers.shopkeeper.ticking.ShopkeeperTicker;
 import com.nisovin.shopkeepers.util.bukkit.MutableChunkCoords;
+import com.nisovin.shopkeepers.util.bukkit.SchedulerUtils;
 import com.nisovin.shopkeepers.util.bukkit.TextUtils;
 import com.nisovin.shopkeepers.util.java.Validate;
 import com.nisovin.shopkeepers.util.logging.Log;
 import com.nisovin.shopkeepers.util.timer.Timer;
 import com.nisovin.shopkeepers.util.timer.Timings;
+import com.tcoded.folialib.wrapper.task.WrappedTask;
 
 /**
  * Updates and keeps track of chunk activations for chunks that contain shopkeepers.
@@ -59,8 +61,14 @@ public class ShopkeeperChunkActivator {
 	private static final Predicate<AbstractShopkeeper> SHOPKEEPER_IS_ACTIVE = AbstractShopkeeper::isActive;
 	private static final Predicate<AbstractShopkeeper> SHOPKEEPER_IS_INACTIVE = Unsafe.assertNonNull(SHOPKEEPER_IS_ACTIVE.negate());
 
-	private static final Location sharedLocation = new Location(null, 0, 0, 0);
-	private static final MutableChunkCoords sharedChunkCoords = new MutableChunkCoords();
+	// Thread-local, because on Folia these shared buffers may be used from multiple region threads
+	// concurrently (e.g. during chunk events):
+	private static final ThreadLocal<Location> sharedLocation = ThreadLocal.withInitial(
+			() -> new Location(null, 0, 0, 0)
+	);
+	private static final ThreadLocal<MutableChunkCoords> sharedChunkCoords = ThreadLocal.withInitial(
+			MutableChunkCoords::new
+	);
 
 	private final SKShopkeepersPlugin plugin;
 	private final SKShopkeeperRegistry shopkeeperRegistry;
@@ -68,17 +76,19 @@ public class ShopkeeperChunkActivator {
 	private final ShopkeeperSpawner shopkeeperSpawner;
 	private final ChunkActivationListener listener = new ChunkActivationListener(Unsafe.initialized(this));
 
-	private final Map<ChunkCoords, ChunkData> chunks = new HashMap<>();
+	// Concurrent: On Folia, chunk (un)load events and shopkeeper registry changes may touch this map
+	// from different region threads.
+	private final Map<ChunkCoords, ChunkData> chunks = new ConcurrentHashMap<>();
 
-	private boolean chunkActivationInProgress = false;
+	private final AtomicBoolean chunkActivationInProgress = new AtomicBoolean();
 	// This does not consider pending delayed chunk activation tasks, but only tracks actual
-	// activation requests while another chunk activation is in progress. The queue is expected to
-	// usually not contain many elements, so removing elements from the middle of the ArrayDeque
-	// should be sufficiently fast.
-	private final Queue<ChunkData> deferredChunkActivations = new ArrayDeque<>();
+	// activation requests while another chunk activation is in progress.
+	private final Queue<ChunkData> deferredChunkActivations = new ConcurrentLinkedQueue<>();
 
 	private final Timer chunkActivationTimings = new Timer();
 	private int immediateChunkActivationRadius;
+	private volatile boolean stopped;
+	private volatile long generation;
 
 	public ShopkeeperChunkActivator(
 			SKShopkeepersPlugin plugin,
@@ -97,6 +107,8 @@ public class ShopkeeperChunkActivator {
 	}
 
 	public void onEnable() {
+		stopped = false;
+		generation++;
 		// Determine the immediate chunk activation radius:
 		immediateChunkActivationRadius = Math.min(
 				IMMEDIATE_CHUNK_ACTIVATION_RADIUS,
@@ -107,9 +119,17 @@ public class ShopkeeperChunkActivator {
 	}
 
 	public void onDisable() {
+		stopped = true;
+		generation++;
+		chunks.values().forEach(ChunkData::cleanUp);
 		HandlerList.unregisterAll(listener);
 		chunkActivationTimings.reset();
-		this.ensureEmpty();
+		if (plugin.getFoliaLib().isFolia()) {
+			chunks.clear();
+			deferredChunkActivations.clear();
+		} else {
+			this.ensureEmpty();
+		}
 	}
 
 	private void ensureEmpty() {
@@ -127,11 +147,13 @@ public class ShopkeeperChunkActivator {
 
 	private @Nullable ChunkData getChunkData(Chunk chunk) {
 		assert chunk != null;
+		MutableChunkCoords sharedChunkCoords = ShopkeeperChunkActivator.sharedChunkCoords.get();
 		sharedChunkCoords.set(chunk);
 		return this.getChunkData(sharedChunkCoords);
 	}
 
 	private @Nullable ChunkData getChunkData(String worldName, int chunkX, int chunkZ) {
+		MutableChunkCoords sharedChunkCoords = ShopkeeperChunkActivator.sharedChunkCoords.get();
 		sharedChunkCoords.set(worldName, chunkX, chunkZ);
 		return this.getChunkData(sharedChunkCoords);
 	}
@@ -145,7 +167,8 @@ public class ShopkeeperChunkActivator {
 
 	private ChunkData getOrCreateChunkData(ChunkCoords chunkCoords) {
 		assert chunkCoords != null;
-		ChunkData chunkData = chunks.computeIfAbsent(chunkCoords, ChunkData::new);
+		ChunkData chunkData = chunks.computeIfAbsent(chunkCoords, coords ->
+				plugin.getFoliaLib().isFolia() ? new ChunkData(coords, false) : new ChunkData(coords));
 		assert chunkData != null;
 		return chunkData;
 	}
@@ -186,8 +209,24 @@ public class ShopkeeperChunkActivator {
 	public void checkShopkeeperActivation(AbstractShopkeeper shopkeeper) {
 		assert shopkeeper != null;
 		assert !shopkeeper.isVirtual();
+		if (stopped || !shopkeeper.isValid()) return;
+		if (plugin.getFoliaLib().isFolia()
+				&& !shopkeeperRegistry.isOwnerThread(shopkeeper)) {
+			shopkeeperRegistry.runOnOwner(shopkeeper, () -> {
+				this.checkShopkeeperActivation(shopkeeper);
+				return true;
+			});
+			return;
+		}
+
 		ChunkCoords chunkCoords = Unsafe.assertNonNull(shopkeeper.getLastChunkCoords());
-		ChunkData chunkData = Unsafe.assertNonNull(this.getChunkData(chunkCoords));
+		ChunkData chunkData = this.getChunkData(chunkCoords);
+		if (chunkData == null) return;
+		if (plugin.getFoliaLib().isFolia() && !chunkData.isActive()
+				&& !chunkData.isActivationDelayed()) {
+			this.activateChunk(chunkData);
+		}
+
 		if (chunkData.isActive()) {
 			this.activateShopkeeper(shopkeeper);
 		} else {
@@ -295,6 +334,7 @@ public class ShopkeeperChunkActivator {
 	private class DelayedChunkActivationTask implements Runnable {
 
 		private final ChunkData chunkData;
+		private @Nullable WrappedTask task;
 
 		DelayedChunkActivationTask(ChunkData chunkData) {
 			assert chunkData != null;
@@ -303,17 +343,21 @@ public class ShopkeeperChunkActivator {
 
 		void start() {
 			assert !chunkData.isActive() && !chunkData.isActivationDelayed();
-			BukkitTask task = Bukkit.getScheduler().runTaskLater(
-					plugin,
-					this,
-					CHUNK_ACTIVATION_DELAY_TICKS
-			);
+			ChunkCoords coords = chunkData.getChunkCoords();
+			World world = coords.getWorld();
+			if (world == null) return;
+			Location location = new Location(world, coords.getChunkX() * 16 + 8, 0,
+					coords.getChunkZ() * 16 + 8);
+			this.task = SchedulerUtils.runTaskLaterOrOmit(
+					location, this, CHUNK_ACTIVATION_DELAY_TICKS);
 			chunkData.setDelayedActivationTask(task);
 		}
 
 		@Override
 		public void run() {
-			assert chunkData.getChunkCoords().isChunkLoaded(); // We stop the task on chunk unloads
+			@Nullable WrappedTask task = this.task;
+			if (stopped || chunks.get(chunkData.getChunkCoords()) != chunkData
+					|| task == null || !chunkData.isDelayedActivationTask(task)) return;
 			chunkData.setDelayedActivationTask(null);
 			activateChunk(chunkData);
 		}
@@ -321,12 +365,14 @@ public class ShopkeeperChunkActivator {
 
 	void activatePendingNearbyChunksDelayed(Player player) {
 		assert player != null;
-		Bukkit.getScheduler().runTask(plugin, new ActivatePendingNearbyChunksTask(player));
+		// Runs on the player's region, because it reads the player's location:
+		SchedulerUtils.runTaskOrOmit(player, new ActivatePendingNearbyChunksTask(player));
 	}
 
 	private class ActivatePendingNearbyChunksTask implements Runnable {
 
 		private final Player player;
+		private final long expectedGeneration = generation;
 
 		ActivatePendingNearbyChunksTask(Player player) {
 			assert player != null;
@@ -335,6 +381,7 @@ public class ShopkeeperChunkActivator {
 
 		@Override
 		public void run() {
+			if (stopped || generation != expectedGeneration) return;
 			if (!player.isOnline()) return; // Player is no longer online
 			activatePendingNearbyChunks(player);
 		}
@@ -343,6 +390,7 @@ public class ShopkeeperChunkActivator {
 	// Activates nearby chunks if they are currently pending a delayed activation:
 	private void activatePendingNearbyChunks(Player player) {
 		World world = player.getWorld();
+		Location sharedLocation = ShopkeeperChunkActivator.sharedLocation.get();
 		Location location = Unsafe.assertNonNull(player.getLocation(sharedLocation));
 		int chunkX = ChunkCoords.fromBlock(location.getBlockX());
 		int chunkZ = ChunkCoords.fromBlock(location.getBlockZ());
@@ -393,6 +441,19 @@ public class ShopkeeperChunkActivator {
 
 	private void activateChunk(ChunkData chunkData) {
 		assert chunkData != null;
+		if (stopped) return;
+		if (plugin.getFoliaLib().isFolia()) {
+			ChunkCoords coords = chunkData.getChunkCoords();
+			World world = coords.getWorld();
+			if (world == null || !plugin.isEnabled()) return;
+			Location location = new Location(world, coords.getChunkX() * 16 + 8, 0,
+					coords.getChunkZ() * 16 + 8);
+			if (!SchedulerUtils.isMainThread(location)) {
+				SchedulerUtils.runTaskOrOmit(location, () -> this.activateChunk(chunkData));
+				return;
+			}
+			if (chunks.get(coords) != chunkData || !coords.isChunkLoaded()) return;
+		}
 		// Note (SPIGOT-6980): On early versions of 1.18.2, chunks may report to not be loaded
 		// during ChunkLoadEvents, which breaks this and several similar assertions (not so bad),
 		// but likely also actual code related to chunk/shopkeeper activation (potentially bad).
@@ -412,7 +473,7 @@ public class ShopkeeperChunkActivator {
 		chunkData.cancelDelayedActivation(); // Cancel any pending delayed activation
 
 		ChunkCoords chunkCoords = chunkData.getChunkCoords();
-		if (chunkActivationInProgress) {
+		if (!chunkActivationInProgress.compareAndSet(false, true)) {
 			if (oldShouldBeActive) {
 				// The chunk is already about to be activated.
 				// Note: This does not necessarily indicate that the chunk is inside the
@@ -430,13 +491,13 @@ public class ShopkeeperChunkActivator {
 					() -> "Another chunk activation is already in progress. "
 							+ "Deferring activation of chunk " + chunkCoords);
 			deferredChunkActivations.add(chunkData);
+			if (!chunkActivationInProgress.get()) this.processDeferredChunkActivations();
 			return;
 		}
 		// Deferred chunk activations can only be observed while another chunk activation is already
 		// in progress.
 		assert !this.isActivationDeferred(chunkData);
 
-		chunkActivationInProgress = true;
 		chunkActivationTimings.start();
 
 		// Get the chunk shopkeepers:
@@ -449,6 +510,21 @@ public class ShopkeeperChunkActivator {
 
 		// Mark the chunk as active:
 		chunkData.setActive(true);
+		if (plugin.getFoliaLib().isFolia()) {
+			chunkActivationInProgress.set(false);
+			chunkActivationTimings.stop();
+			shopkeepers.forEach(shopkeeper -> shopkeeperRegistry.runOnOwner(shopkeeper, () -> {
+				if (!stopped && chunks.get(chunkCoords) == chunkData && chunkData.isActive()
+						&& shopkeeper.isValid()
+						&& chunkCoords.equals(shopkeeper.getLastChunkCoords())) {
+					this.activateShopkeeper(shopkeeper);
+				}
+
+				return true;
+			}));
+			this.processDeferredChunkActivations();
+			return;
+		}
 
 		// Mark the shopkeepers as active:
 		shopkeepers.forEach(shopkeeper -> shopkeeper.setActive(true));
@@ -490,7 +566,7 @@ public class ShopkeeperChunkActivator {
 			);
 		} finally {
 			chunkActivationTimings.stop();
-			chunkActivationInProgress = false;
+			chunkActivationInProgress.set(false);
 
 			// Process the deferred chunk activations:
 			this.processDeferredChunkActivations();
@@ -500,9 +576,7 @@ public class ShopkeeperChunkActivator {
 	private void processDeferredChunkActivations() {
 		ChunkData chunkData;
 		while ((chunkData = deferredChunkActivations.poll()) != null) {
-			// The chunk is removed from the queue when it is deactivated:
-			assert chunkData.isShouldBeActive();
-			this.activateChunk(chunkData);
+			if (chunkData.isShouldBeActive()) this.activateChunk(chunkData);
 		}
 	}
 
@@ -518,7 +592,21 @@ public class ShopkeeperChunkActivator {
 
 	private void deactivateChunk(ChunkData chunkData) {
 		assert chunkData != null;
+		if (stopped) return;
 		ChunkCoords chunkCoords = chunkData.getChunkCoords();
+		if (plugin.getFoliaLib().isFolia()) {
+			World world = chunkCoords.getWorld();
+			if (world == null || !plugin.isEnabled()) return;
+			Location location = new Location(world, chunkCoords.getChunkX() * 16 + 8, 0,
+					chunkCoords.getChunkZ() * 16 + 8);
+			if (!SchedulerUtils.isMainThread(location)) {
+				SchedulerUtils.runTaskOrOmit(location, () -> {
+					if (chunks.get(chunkCoords) == chunkData) this.deactivateChunk(chunkData);
+				});
+				return;
+			}
+		}
+
 		if (!chunkData.isActive()) {
 			// The chunk is already inactive.
 			// Cancel any pending activations for the chunk:
@@ -543,6 +631,19 @@ public class ShopkeeperChunkActivator {
 				() -> "Deactivating " + shopkeepers.size() + " shopkeepers in chunk "
 						+ TextUtils.getChunkString(chunkCoords)
 		);
+
+		if (plugin.getFoliaLib().isFolia()) {
+			shopkeepers.forEach(shopkeeper -> shopkeeperRegistry.runOnOwner(shopkeeper, () -> {
+				if (!stopped && chunks.get(chunkCoords) == chunkData && !chunkData.isActive()
+						&& shopkeeper.isValid()
+						&& chunkCoords.equals(shopkeeper.getLastChunkCoords())) {
+					this.deactivateShopkeeper(shopkeeper);
+				}
+
+				return true;
+			}));
+			return;
+		}
 
 		// Mark the shopkeepers as inactive:
 		shopkeepers.forEach(shopkeeper -> shopkeeper.setActive(false));
@@ -617,6 +718,13 @@ public class ShopkeeperChunkActivator {
 		List<? extends ChunkCoords> chunks = new ArrayList<>(
 				shopkeeperRegistry.getShopkeepersByChunks(worldName).keySet()
 		);
+		if (plugin.getFoliaLib().isFolia()) {
+			chunks.forEach(coords -> {
+				ChunkData chunkData = this.getChunkData(coords);
+				if (chunkData != null) this.activateChunk(chunkData);
+			});
+			return;
+		}
 
 		// First, mark the chunks as 'should-be-active':
 		chunks.forEach(chunkCoords -> {

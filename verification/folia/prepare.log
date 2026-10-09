@@ -1,0 +1,382 @@
+Downloading mojang_26.2.jar
+Applying patches
+Starting org.bukkit.craftbukkit.Main
+2026-10-09T14:16:51.281375912Z ServerMain WARN Advanced terminal features are not available in this environment
+[22:16:51 INFO]: [bootstrap] Running Java 25 (Java HotSpot(TM) 64-Bit Server VM 25.0.4.1+1-LTS-5; Oracle Corporation null) on Linux 7.0.0-38-generic (amd64)
+[22:16:51 INFO]: [bootstrap] Loading Folia 26.2-7-ver/26.2.x@14b7fee (2026-08-25T13:29:28Z) for Minecraft 26.2
+[22:16:51 INFO]: [PluginInitializerManager] Initializing plugins...
+[22:16:51 INFO]: [PluginInitializerManager] Initialized 2 plugins
+[22:16:51 INFO]: [PluginInitializerManager] Bukkit plugins (2):
+ - Shopkeepers (2.28.2-SNAPSHOT+2def75f), ShopkeepersFoliaProbe (1.0.0)
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.joml.MemUtil$MemUtilUnsafe (file:/tmp/shopkeepers-folia-harness/server/libraries/org/joml/joml/1.10.8/joml-1.10.8.jar)
+WARNING: Please consider reporting this to the maintainers of class org.joml.MemUtil$MemUtilUnsafe
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+[22:16:55 INFO]: [ca.spottedleaf.dataconverter.minecraft.datatypes.MCTypeRegistry] Initialising converters for DataConverter...
+[22:16:55 INFO]: Environment: Environment[sessionHost=https://sessionserver.mojang.com, servicesHost=https://api.minecraftservices.com, profilesHost=https://api.mojang.com, name=PROD]
+[22:16:55 INFO]: [ca.spottedleaf.dataconverter.minecraft.datatypes.MCTypeRegistry] Finished initialising converters for DataConverter in 347.1ms
+[22:16:55 INFO]: Found new data pack paper, loading it automatically
+[22:16:56 INFO]: No existing world data, creating new world
+[22:16:56 ERROR]: No key layers in MapLike[{}]
+[22:16:56 INFO]: Loaded 1585 recipes
+[22:16:56 INFO]: Loaded 1688 advancements
+[22:16:56 INFO]: Starting minecraft server version 26.2
+[22:16:56 INFO]: Loading properties
+[22:16:56 INFO]: This server is running Folia version 26.2-7-ver/26.2.x@14b7fee (2026-08-25T13:29:28Z) (Implementing API version 26.2.build.7-beta)
+[22:16:56 INFO]: [spark] This server bundles the spark profiler. For more information please visit https://docs.papermc.io/paper/profiling
+[22:16:56 INFO]: Server Ping Player Sample Count: 12
+[22:16:56 INFO]: Using 4 threads for Netty based IO
+[22:16:57 INFO]: [MoonriseCommon] Paper is using 5 worker threads, 1 I/O threads
+[22:16:57 INFO]: [io.papermc.paper.threadedregions.TickRegions] Initialised EDF Folia scheduler with initial 2 target thread(s)
+[22:16:57 INFO]: Default game type: SURVIVAL
+[22:16:57 INFO]: Generating keypair
+[22:16:57 INFO]: Starting Minecraft server on 127.0.0.1:25682
+[22:16:57 INFO]: Paper: Using libdeflate (Linux x86_64) compression from Velocity.
+[22:16:57 INFO]: Paper: Using OpenSSL 3.x.x (Linux x86_64) cipher from Velocity.
+[22:16:57 INFO]: [Shopkeepers] Loading server plugin Shopkeepers v2.28.2-SNAPSHOT+2def75f
+[22:16:57 INFO]: [Shopkeepers] Compatibility provider loaded: 26_2_R1_paper
+[22:16:57 INFO]: [Shopkeepers] Paper compatibility provider loaded.
+[22:16:57 INFO]: [Shopkeepers] Loading config.
+[22:16:57 INFO]: [Shopkeepers] Missing config version. Assuming version '0'.
+[22:16:57 INFO]: [Shopkeepers] Migrating config from version 0 to version 1 ...
+[22:16:57 INFO]: [Shopkeepers] Config migrated to version 1.
+[22:16:57 INFO]: [Shopkeepers] Migrating config from version 1 to version 2 ...
+[22:16:57 INFO]: [Shopkeepers]   Migrating item data for 'shop-creation-item' (null) and 'shop-creation-item-name' (null) and 'shop-creation-item-lore' (null) to new format at 'shop-creation-item'.
+[22:16:57 WARN]: [Shopkeepers]     Skipping migration for item 'shop-creation-item'! Unknown material: null
+[22:16:57 INFO]: [Shopkeepers]   Migrating item data for 'name-item' (null) and 'name-item-lore' (null) to new format at 'name-item'.
+[22:16:57 WARN]: [Shopkeepers]     Skipping migration for item 'name-item'! Unknown material: null
+[22:16:57 INFO]: [Shopkeepers]   Migrating item data for 'hire-item' (null) and 'hire-item-name' (null) and 'hire-item-lore' (null) to new format at 'hire-item'.
+[22:16:57 WARN]: [Shopkeepers]     Skipping migration for item 'hire-item'! Unknown material: null
+[22:16:57 INFO]: [Shopkeepers]   Migrating item data for 'currency-item' (null) and 'currency-item-name' (null) and 'currency-item-lore' (null) to new format at 'currency-item'.
+[22:16:57 WARN]: [Shopkeepers]     Skipping migration for item 'currency-item'! Unknown material: null
+[22:16:57 INFO]: [Shopkeepers]   Migrating item data for 'zero-currency-item' (null) and 'zero-currency-item-name' (null) and 'zero-currency-item-lore' (null) to new format at 'zero-currency-item'.
+[22:16:57 WARN]: [Shopkeepers]     Skipping migration for item 'zero-currency-item'! Unknown material: null
+[22:16:57 INFO]: [Shopkeepers]   Migrating item data for 'high-currency-item' (null) and 'high-currency-item-name' (null) and 'high-currency-item-lore' (null) to new format at 'high-currency-item'.
+[22:16:57 WARN]: [Shopkeepers]     Skipping migration for item 'high-currency-item'! Unknown material: null
+[22:16:57 INFO]: [Shopkeepers]   Migrating item data for 'high-zero-currency-item' (null) and 'high-zero-currency-item-name' (null) and 'high-zero-currency-item-lore' (null) to new format at 'zero-high-currency-item'.
+[22:16:57 WARN]: [Shopkeepers]     Skipping migration for item 'high-zero-currency-item'! Unknown material: null
+[22:16:57 INFO]: [Shopkeepers] Config migrated to version 2.
+[22:16:57 INFO]: [Shopkeepers] Migrating config from version 2 to version 3 ...
+[22:16:57 INFO]: [Shopkeepers] Config migrated to version 3.
+[22:16:57 INFO]: [Shopkeepers] Migrating config from version 3 to version 4 ...
+[22:16:57 INFO]: [Shopkeepers] Config migrated to version 4.
+[22:16:57 INFO]: [Shopkeepers] Migrating config from version 4 to version 5 ...
+[22:16:57 INFO]: [Shopkeepers] Config migrated to version 5.
+[22:16:57 INFO]: [Shopkeepers] Migrating config from version 5 to version 6 ...
+[22:16:57 INFO]: [Shopkeepers]   Adding setting 'add-shop-creation-item-tag' with value: false
+[22:16:57 INFO]: [Shopkeepers]   Adding setting 'identify-shop-creation-item-by-tag' with value: false
+[22:16:57 INFO]: [Shopkeepers] Config migrated to version 6.
+[22:16:57 INFO]: [Shopkeepers] Migrating config from version 6 to version 7 ...
+[22:16:57 INFO]: [Shopkeepers] Config migrated to version 7.
+[22:16:57 INFO]: [Shopkeepers] Migrating config from version 7 to version 8 ...
+[22:16:57 INFO]: [Shopkeepers]   Adding setting 'trade-log-storage' with value: DISABLED
+[22:16:57 INFO]: [Shopkeepers] Config migrated to version 8.
+[22:16:57 INFO]: [Shopkeepers] Migrating config from version 8 to version 9 ...
+[22:16:57 INFO]: [Shopkeepers]   Setting 'trade-succeeded-sound': Not found. Skipping migration.
+[22:16:57 INFO]: [Shopkeepers]   Setting 'trade-failed-sound': Not found. Skipping migration.
+[22:16:57 INFO]: [Shopkeepers]   Setting 'trade-notification-sound': Not found. Skipping migration.
+[22:16:57 INFO]: [Shopkeepers]   Setting 'shop-owner-trade-notification-sound': Not found. Skipping migration.
+[22:16:57 INFO]: [Shopkeepers] Config migrated to version 9.
+[22:16:57 INFO]: [Shopkeepers] Migrating config from version 9 to version 10 ...
+[22:16:57 INFO]: [Shopkeepers] Config migrated to version 10.
+[22:16:57 INFO]: [Shopkeepers] Migrating config from version 10 to version 11 ...
+[22:16:57 INFO]: [Shopkeepers] Config migrated to version 11.
+[22:16:57 INFO]: [Shopkeepers] Migrating config from version 11 to version 12 ...
+[22:16:57 INFO]: [Shopkeepers] Config migrated to version 12.
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: data-version
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: debug
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: debug-options
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: enable-metrics
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: language
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: ignore-failed-server-assumption-tests
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: bypass-spawn-blocking
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: delete-unspawnable-shopkeepers
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: check-shop-interaction-result
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: enable-left-click-interaction
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: enable-world-guard-restrictions
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: require-world-guard-allow-shop-flag
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: register-world-guard-allow-shop-flag
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: enable-towny-restrictions
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: check-spawn-location-interaction-result
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: disable-inventory-verification
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: shop-creation-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: prevent-shop-creation-item-regular-usage
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: invert-shop-type-and-object-type-selection
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: deleting-player-shop-returns-creation-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: require-container-recently-placed
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: max-container-distance
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: max-shops-per-player
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: max-shops-perm-options
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: protect-containers
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: prevent-item-movement
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: prevent-copper-golem-access
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: delete-shopkeeper-on-break-container
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: player-shopkeeper-inactive-days
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: player-shop-expiration-days
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: hired-player-shop-expiration-days
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: notify-shop-members-about-expiration
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: player-shop-expiration-notification-thresholds
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: enabled-living-shops
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: enable-end-crystal-shops
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: allow-end-crystal-shops-in-the-end
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: disable-gravity
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: gravity-chunk-range
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: entity-behavior-tick-period
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: shulker-peek-if-player-nearby
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: shulker-peek-height
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: slime-max-size
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: magma-cube-max-size
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: sulfur-cube-max-size
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: silence-shop-entities
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: show-nameplates
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: always-show-nameplates
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: enable-citizen-shops
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: default-citizen-npc-type
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: set-citizen-npc-owner-of-player-shops
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: citizen-npc-fluid-pushable
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: cancel-citizen-npc-interactions
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: save-citizen-npcs-instantly
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: snapshots-save-citizen-npc-data
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: delete-invalid-citizen-shopkeepers
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: enable-sign-shops
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: enable-sign-post-shops
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: enable-hanging-sign-shops
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: enable-glowing-sign-text
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: name-regex
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: naming-of-player-shops-via-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: allow-renaming-of-player-npc-shops
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: selling-empty-trade-result-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: selling-empty-trade-item1
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: selling-empty-trade-item2
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: selling-empty-item1
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: selling-empty-item2
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: buying-empty-trade-result-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: buying-empty-trade-item1
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: buying-empty-trade-item2
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: buying-empty-result-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: buying-empty-item2
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: trading-empty-trade-result-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: trading-empty-trade-item1
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: trading-empty-trade-item2
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: trading-empty-result-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: trading-empty-item1
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: trading-empty-item2
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: book-empty-trade-result-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: book-empty-trade-item1
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: book-empty-trade-item2
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: book-empty-item1
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: book-empty-item2
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: max-trades-pages
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: max-player-shop-trades-pages
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: previous-page-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: next-page-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: current-page-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: trade-setup-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: shop-information-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: placeholder-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: enable-closing-of-player-shops
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: force-open-player-shops
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: shop-open-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: shop-closed-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: name-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: enable-all-equipment-editor-slots
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: enable-moving-of-player-shops
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: move-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: max-members-per-shop
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: allow-members-with-full-access
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: members-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: add-member-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: max-containers-per-player-shop
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: container-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: add-container-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: enable-player-shop-open-container
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: trade-notifications-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: delete-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: disable-other-villagers
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: disable-other-villagers-worlds
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: block-villager-spawns
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: block-villager-spawns-worlds
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: disable-zombie-villager-curing
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: disable-zombie-villager-curing-worlds
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: hire-other-villagers
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: hire-other-villagers-worlds
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: disable-wandering-traders
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: disable-wandering-traders-worlds
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: block-wandering-trader-spawns
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: block-wandering-trader-spawns-worlds
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: hire-wandering-traders
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: hire-wandering-traders-worlds
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: edit-regular-villagers
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: edit-regular-wandering-traders
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: hire-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: hire-other-villagers-costs
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: hire-require-creation-permission
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: prevent-trading-with-own-shop
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: prevent-trading-while-member-is-online
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: use-strict-item-comparison
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: increment-villager-statistics
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: simulate-villager-trading-sounds
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: simulate-villager-ambient-sounds
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: simulate-wandering-trader-trading-sounds
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: simulate-wandering-trader-ambient-sounds
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: simulate-trading-sounds-only-for-the-trading-player
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: trade-succeeded-sound
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: trade-failed-sound
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: tax-rate
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: tax-round-up
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: notify-players-about-trades
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: trade-notification-sound
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: notify-shop-members-about-trades
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: shop-member-trade-notification-sound
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: trade-log-merge-duration-ticks
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: trade-log-next-merge-timeout-ticks
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: log-item-metadata
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: currency-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: high-currency-item
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: high-currency-value
+[22:16:57 WARN]: [Shopkeepers] Config: Inserting default value for missing config entry: high-currency-min-cost
+[22:16:58 INFO]: [Shopkeepers] Config: 'data-version' updated from 4325 to 4903.
+[22:16:58 INFO]: [Shopkeepers] Saving config.
+[22:16:58 INFO]: [Shopkeepers] Loading language file: language-en-default.yml
+[22:16:58 INFO]: [Shopkeepers] Registering defaults.
+[22:16:58 INFO]: [Shopkeepers] Loaded all plugin classes (299 ms).
+[22:16:58 INFO]: [ShopkeepersFoliaProbe] Loading server plugin ShopkeepersFoliaProbe v1.0.0
+[22:16:58 WARN]: **** SERVER IS RUNNING IN OFFLINE/INSECURE MODE!
+[22:16:58 WARN]: The server will make no attempt to authenticate usernames. Beware.
+[22:16:58 WARN]: While this makes the game possible to play without internet access, it also opens up the ability for hackers to connect with any username they choose.
+[22:16:58 WARN]: To change this, set "online-mode" to "true" in the server.properties file.
+[22:16:58 INFO]: Preparing level "probe_world"
+[22:16:58 INFO]: Selecting spawn point for level 'minecraft:overworld'...
+[22:16:59 INFO]: Selecting spawn point for level 'minecraft:the_nether'...
+[22:17:00 INFO]: Selecting spawn point for level 'minecraft:the_end'...
+[22:17:00 INFO]: Loading 0 persistent chunks for level 'minecraft:overworld'...
+[22:17:00 INFO]: Preparing spawn area: 100%
+[22:17:00 INFO]: Prepared spawn area in 1357 ms
+[22:17:00 INFO]: Loading 0 persistent chunks for level 'minecraft:the_nether'...
+[22:17:00 INFO]: Preparing spawn area: 100%
+[22:17:00 INFO]: Prepared spawn area in 990 ms
+[22:17:00 INFO]: Loading 0 persistent chunks for level 'minecraft:the_end'...
+[22:17:00 INFO]: Preparing spawn area: 100%
+[22:17:00 INFO]: Prepared spawn area in 144 ms
+[22:17:00 INFO]: Done preparing level "probe_world" (1.615s)
+[22:17:00 INFO]: [Shopkeepers] Enabling Shopkeepers v2.28.2-SNAPSHOT+2def75f
+[22:17:00 INFO]: [ShopkeepersFoliaProbe] Enabling ShopkeepersFoliaProbe v1.0.0
+[22:17:00 INFO]: [ShopkeepersFoliaProbe] PROBE PASS enable thread=Server thread player-free probe; trade interaction is NOT tested
+[22:17:00 INFO]: [spark] The spark plugin has been preferred but was not loaded. The bundled spark profiler will enabled instead.
+[22:17:00 INFO]: [spark] The spark profiler will not be enabled because it is currently disabled in the configuration.
+[22:17:00 INFO]: Saving chunks for level 'ServerLevel[probe_world]'/minecraft:overworld
+[22:17:00 WARN]: [Shopkeepers] A tick based delay or timer was scheduled with a time span of 0 ticks. The server is already processing the current tick and, as such, won't process new tasks in less than 1 tick. FoliaLib will automatically change time spans of <= 0 ticks to 1 tick going forward. This warning is purely informative and won't impact the operation of the plugin. Plugin developers can disable this warning or enable debug mode to location the source of this warning.
+[22:17:00 INFO]: Saving chunks for level 'ServerLevel[probe_world]'/minecraft:the_nether
+[22:17:00 INFO]: Saving chunks for level 'ServerLevel[probe_world]'/minecraft:the_end
+[22:17:00 INFO]: ThreadedAnvilChunkStorage (world): All chunks are saved
+[22:17:00 INFO]: ThreadedAnvilChunkStorage (DIM-1): All chunks are saved
+[22:17:00 INFO]: ThreadedAnvilChunkStorage (DIM1): All chunks are saved
+[22:17:00 INFO]: ThreadedAnvilChunkStorage: All dimensions are saved
+[22:17:00 INFO]: Done (9.492s)! For help, type "help"
+[22:17:00 INFO]: [ShopkeepersFoliaProbe] PROBE PASS global-dispatch thread=Folia Region Scheduler Thread #0 phase=create distance=8192 blocks per axis
+[22:17:00 INFO]: [ShopkeepersFoliaProbe] PROBE PASS region-ticket-r0 thread=Folia Region Scheduler Thread #0 chunk=0,0
+[22:17:00 INFO]: [ShopkeepersFoliaProbe] PROBE PASS region-ticket-r1 thread=Folia Region Scheduler Thread #1 chunk=512,512
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS create-r0-s0 thread=Folia Region Scheduler Thread #0 uuid=6f4f7ea8-d098-4fc7-b9db-ab5d10b5029b
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS create-r1-s0 thread=Folia Region Scheduler Thread #1 uuid=c16c0c51-9bf1-4f9e-b23a-16bee9ce76eb
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS markDirty-r0-s0 thread=Folia Region Scheduler Thread #0 implementation method returned
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS markDirty-r1-s0 thread=Folia Region Scheduler Thread #1 implementation method returned
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS save-request-r0-s0 thread=Folia Region Scheduler Thread #0 nonblocking request returned; disk verification pending
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS save-request-r1-s0 thread=Folia Region Scheduler Thread #1 nonblocking request returned; disk verification pending
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS create-r0-s1 thread=Folia Region Scheduler Thread #0 uuid=351f9ff4-d4a7-40d3-ae3d-71c065c5518e
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS create-r1-s1 thread=Folia Region Scheduler Thread #1 uuid=a0f6ba8e-84d8-4a2a-b345-745517fa84ba
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS markDirty-r0-s1 thread=Folia Region Scheduler Thread #0 implementation method returned
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS save-request-r0-s1 thread=Folia Region Scheduler Thread #0 nonblocking request returned; disk verification pending
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS markDirty-r1-s1 thread=Folia Region Scheduler Thread #1 implementation method returned
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS save-request-r1-s1 thread=Folia Region Scheduler Thread #1 nonblocking request returned; disk verification pending
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS create-r0-s2 thread=Folia Region Scheduler Thread #0 uuid=82289f6a-8d77-47f8-b282-08620988ba71
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS markDirty-r0-s2 thread=Folia Region Scheduler Thread #0 implementation method returned
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS save-request-r0-s2 thread=Folia Region Scheduler Thread #0 nonblocking request returned; disk verification pending
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS create-r1-s2 thread=Folia Region Scheduler Thread #1 uuid=e39a721d-4a80-4e57-a926-10df4e6997d2
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS markDirty-r1-s2 thread=Folia Region Scheduler Thread #1 implementation method returned
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS save-request-r1-s2 thread=Folia Region Scheduler Thread #1 nonblocking request returned; disk verification pending
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS cross-region-dispatch thread=Folia Region Scheduler Thread #1 fanout rename/delete to A and B
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS rename-r0-s0 thread=Folia Region Scheduler Thread #0 Renamed0_0
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS rename-r1-s0 thread=Folia Region Scheduler Thread #1 Renamed1_0
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS markDirty-r0-s0 thread=Folia Region Scheduler Thread #0 implementation method returned
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS markDirty-r1-s0 thread=Folia Region Scheduler Thread #1 implementation method returned
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS save-request-r1-s0 thread=Folia Region Scheduler Thread #1 nonblocking request returned; disk verification pending
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS save-request-r0-s0 thread=Folia Region Scheduler Thread #0 nonblocking request returned; disk verification pending
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS rename-r1-s1 thread=Folia Region Scheduler Thread #1 Renamed1_1
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS rename-r0-s1 thread=Folia Region Scheduler Thread #0 Renamed0_1
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS markDirty-r0-s1 thread=Folia Region Scheduler Thread #0 implementation method returned
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS markDirty-r1-s1 thread=Folia Region Scheduler Thread #1 implementation method returned
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS save-request-r0-s1 thread=Folia Region Scheduler Thread #0 nonblocking request returned; disk verification pending
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS save-request-r1-s1 thread=Folia Region Scheduler Thread #1 nonblocking request returned; disk verification pending
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS delete-r0-s2 thread=Folia Region Scheduler Thread #0 uuid=82289f6a-8d77-47f8-b282-08620988ba71
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS delete-r1-s2 thread=Folia Region Scheduler Thread #1 uuid=e39a721d-4a80-4e57-a926-10df4e6997d2
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS delete-save-request-r0 thread=Folia Region Scheduler Thread #0 nonblocking request returned
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS delete-save-request-r1 thread=Folia Region Scheduler Thread #1 nonblocking request returned
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS created-live-villagers-r0 thread=Folia Region Scheduler Thread #1 two live villagers on owning region
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS created-live-villagers-r1 thread=Folia Region Scheduler Thread #0 two live villagers on owning region
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS disk-persistence-r0-s0 thread=Folia Async Scheduler Thread #1 UUID and renamed name persisted
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS disk-persistence-r0-s1 thread=Folia Async Scheduler Thread #1 UUID and renamed name persisted
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS disk-persistence-r0-s2 thread=Folia Async Scheduler Thread #1 deleted UUID absent
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS disk-persistence-r1-s0 thread=Folia Async Scheduler Thread #1 UUID and renamed name persisted
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS disk-persistence-r1-s1 thread=Folia Async Scheduler Thread #1 UUID and renamed name persisted
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS disk-persistence-r1-s2 thread=Folia Async Scheduler Thread #1 deleted UUID absent
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] PROBE PASS PREPARE_COMPLETE thread=Folia Async Scheduler Thread #1 failures=0; trades NOT tested
+[22:17:01 INFO]: Stopping the server
+[22:17:01 INFO]: [RegionShutdownThread] Awaiting scheduler termination for 60s...
+[22:17:01 INFO]: [RegionShutdownThread] Scheduler halted
+[22:17:01 INFO]: Stopping server
+[22:17:01 INFO]: [ShopkeepersFoliaProbe] Disabling ShopkeepersFoliaProbe v1.0.0
+[22:17:01 INFO]: [Shopkeepers] Disabling Shopkeepers v2.28.2-SNAPSHOT+2def75f
+[22:17:01 INFO]: [RegionShutdownThread] Halting chunk systems...
+[22:17:01 INFO]: [ChunkHolderManager] Waiting 60s for chunk system to halt for world 'minecraft:overworld'
+[22:17:01 INFO]: [ChunkHolderManager] Halted chunk system for world 'minecraft:overworld'
+[22:17:01 INFO]: [ChunkHolderManager] Waiting 60s for chunk system to halt for world 'minecraft:the_nether'
+[22:17:01 INFO]: [ChunkHolderManager] Halted chunk system for world 'minecraft:the_nether'
+[22:17:01 INFO]: [ChunkHolderManager] Waiting 60s for chunk system to halt for world 'minecraft:the_end'
+[22:17:01 INFO]: [ChunkHolderManager] Halted chunk system for world 'minecraft:the_end'
+[22:17:01 INFO]: [RegionShutdownThread] Halted chunk systems
+[22:17:01 INFO]: [RegionShutdownThread] Finishing pending teleports...
+[22:17:01 INFO]: [RegionShutdownThread] Finished pending teleports
+[22:17:01 INFO]: [RegionShutdownThread] Saving all worlds
+[22:17:01 INFO]: [RegionShutdownThread] Saving world data for world 'minecraft:overworld'
+[22:17:01 INFO]: [RegionShutdownThread] Closing player inventories...
+[22:17:01 INFO]: [RegionShutdownThread] Closed player inventories
+[22:17:01 INFO]: [RegionShutdownThread] Saving chunks...
+[22:17:01 INFO]: [RegionShutdownThread] Saving chunks around region around chunk [0, 0] in world 'probe_world'
+[22:17:01 INFO]: [ChunkHolderManager] Saved 729 block chunks, 25 entity chunks, 0 poi chunks in world 'minecraft:overworld' in 0.06s
+[22:17:01 INFO]: [RegionShutdownThread] Saving chunks around region around chunk [512, 512] in world 'probe_world'
+[22:17:01 INFO]: [ChunkHolderManager] Saved 729 block chunks, 25 entity chunks, 0 poi chunks in world 'minecraft:overworld' in 0.08s
+[22:17:01 INFO]: [ChunkHolderManager] Waiting 60s for chunk I/O to halt for world 'minecraft:overworld'
+[22:17:01 INFO]: [ChunkHolderManager] Halted I/O scheduler for world 'minecraft:overworld'
+[22:17:01 INFO]: [RegionShutdownThread] Saved chunks
+[22:17:01 INFO]: [RegionShutdownThread] Saving level data...
+[22:17:01 INFO]: [RegionShutdownThread] Saved level data
+[22:17:01 INFO]: [RegionShutdownThread] Saved world data for world 'minecraft:overworld'
+[22:17:01 INFO]: [RegionShutdownThread] Saving world data for world 'minecraft:the_nether'
+[22:17:01 INFO]: [RegionShutdownThread] Closing player inventories...
+[22:17:01 INFO]: [RegionShutdownThread] Closed player inventories
+[22:17:01 INFO]: [RegionShutdownThread] Saving chunks...
+[22:17:01 INFO]: [RegionShutdownThread] Saving chunks around region around chunk [-10, 6] in world 'probe_world_nether'
+[22:17:01 INFO]: [ChunkHolderManager] Saved 129 block chunks, 0 entity chunks, 0 poi chunks in world 'minecraft:the_nether' in 0.02s
+[22:17:01 INFO]: [ChunkHolderManager] Waiting 60s for chunk I/O to halt for world 'minecraft:the_nether'
+[22:17:01 INFO]: [ChunkHolderManager] Halted I/O scheduler for world 'minecraft:the_nether'
+[22:17:01 INFO]: [RegionShutdownThread] Saved chunks
+[22:17:01 INFO]: [RegionShutdownThread] Saving level data...
+[22:17:01 INFO]: [RegionShutdownThread] Saved level data
+[22:17:01 INFO]: [RegionShutdownThread] Saved world data for world 'minecraft:the_nether'
+[22:17:01 INFO]: [RegionShutdownThread] Saving world data for world 'minecraft:the_end'
+[22:17:01 INFO]: [RegionShutdownThread] Closing player inventories...
+[22:17:01 INFO]: [RegionShutdownThread] Closed player inventories
+[22:17:01 INFO]: [RegionShutdownThread] Saving chunks...
+[22:17:01 INFO]: [RegionShutdownThread] Saved chunks
+[22:17:01 INFO]: [RegionShutdownThread] Saving level data...
+[22:17:01 INFO]: [RegionShutdownThread] Saved level data
+[22:17:01 INFO]: [RegionShutdownThread] Saved world data for world 'minecraft:the_end'
+[22:17:01 INFO]: [RegionShutdownThread] Saved all worlds
+[22:17:01 INFO]: [RegionShutdownThread] Saving global world data...
+[22:17:01 INFO]: [RegionShutdownThread] Saved global world data.
+[22:17:01 INFO]: [RegionShutdownThread] Saving all player data...
+[22:17:01 INFO]: [RegionShutdownThread] Saved all player data
+[22:17:01 INFO]: Waiting for all RegionFile I/O tasks to complete...
+[22:17:01 INFO]: All RegionFile I/O tasks to complete
+[22:17:01 INFO]: [MoonriseCommon] Awaiting termination of worker pool for up to 60s...
+[22:17:01 INFO]: [MoonriseCommon] Awaiting termination of I/O pool for up to 60s...

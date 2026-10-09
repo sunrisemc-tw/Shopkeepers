@@ -48,6 +48,11 @@ public class PlayerShopEditorLayout extends ShopkeeperEditorLayout {
 
 		return new ShopkeeperActionButton() {
 			@Override
+			protected boolean requiresShopOwner() {
+				return false;
+			}
+
+			@Override
 			public @Nullable ItemStack getIcon() {
 				var shopkeeper = (PlayerShopkeeper) this.getShopkeeper();
 				ItemStack iconItem = Settings.membersItem.createItemStack();

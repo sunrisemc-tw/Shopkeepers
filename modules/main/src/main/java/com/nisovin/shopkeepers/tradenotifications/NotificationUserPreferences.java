@@ -1,6 +1,6 @@
 package com.nisovin.shopkeepers.tradenotifications;
 
-import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -19,12 +19,12 @@ public class NotificationUserPreferences implements Listener {
 
 	private static class UserPreferences {
 
-		public boolean notifyOnTrades = true;
-		public boolean receivedDisableTradeNotificationsHint = false;
+		public volatile boolean notifyOnTrades = true;
+		public volatile boolean receivedDisableTradeNotificationsHint = false;
 	}
 
 	private final Plugin plugin;
-	private final Map<UUID, UserPreferences> userPreferences = new HashMap<>();
+	private final Map<UUID, UserPreferences> userPreferences = new ConcurrentHashMap<>();
 
 	public NotificationUserPreferences(Plugin plugin) {
 		this.plugin = plugin;

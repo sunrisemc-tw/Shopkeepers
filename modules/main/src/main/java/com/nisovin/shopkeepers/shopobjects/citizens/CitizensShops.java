@@ -2,10 +2,11 @@ package com.nisovin.shopkeepers.shopobjects.citizens;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 
 import org.bukkit.Bukkit;
@@ -23,6 +24,7 @@ import com.nisovin.shopkeepers.config.Settings;
 import com.nisovin.shopkeepers.dependencies.citizens.CitizensDependency;
 import com.nisovin.shopkeepers.shopkeeper.AbstractShopkeeper;
 import com.nisovin.shopkeepers.shopkeeper.registry.SKShopkeeperRegistry;
+import com.nisovin.shopkeepers.util.bukkit.SchedulerUtils;
 import com.nisovin.shopkeepers.util.bukkit.TextUtils;
 import com.nisovin.shopkeepers.util.java.TimeUtils;
 import com.nisovin.shopkeepers.util.java.Validate;
@@ -82,7 +84,9 @@ public class CitizensShops {
 	// created are not contained in this mapping.
 	// If multiple shopkeepers are associated with the same NPC, this mapping keeps track of all of
 	// these shopkeepers.
-	private final Map<UUID, List<AbstractShopkeeper>> shopkeepersByNpcId = new HashMap<>();
+	// Concurrent: On Folia, shopkeepers may be added to and removed from the registry (and thereby
+	// this mapping) from different region threads.
+	private final Map<UUID, List<AbstractShopkeeper>> shopkeepersByNpcId = new ConcurrentHashMap<>();
 
 	public CitizensShops(SKShopkeepersPlugin plugin) {
 		Validate.notNull(plugin, "plugin is null");
@@ -180,7 +184,7 @@ public class CitizensShops {
 		citizensListener.onEnable();
 
 		// Delayed to run after shopkeepers and NPCs were loaded:
-		Bukkit.getScheduler().runTaskLater(plugin, new DelayedSetupTask(), 3L);
+		SchedulerUtils.runTaskLaterGloballyOrOmit(new DelayedSetupTask(), 3L);
 
 		// Enabled:
 		citizensShopsEnabled = true;
@@ -274,7 +278,7 @@ public class CitizensShops {
 		// of 1, because we usually expect there to only be one shopkeeper associated with the NPC:
 		List<AbstractShopkeeper> shopkeepers = shopkeepersByNpcId.computeIfAbsent(
 				npcId,
-				key -> new ArrayList<>(1)
+				key -> new CopyOnWriteArrayList<>()
 		);
 		assert shopkeepers != null;
 		shopkeepers.add(shopkeeper);

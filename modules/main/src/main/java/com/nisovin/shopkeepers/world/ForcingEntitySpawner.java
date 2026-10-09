@@ -8,6 +8,7 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntitySpawnEvent;
+
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import com.nisovin.shopkeepers.SKShopkeepersPlugin;
@@ -22,8 +23,8 @@ public class ForcingEntitySpawner implements Listener {
 
 	private final SKShopkeepersPlugin plugin;
 
-	private @Nullable Location nextSpawnLocation = null;
-	private @Nullable EntityType nextEntityType = null;
+	private final ThreadLocal<@Nullable Location> nextSpawnLocation = new ThreadLocal<>();
+	private final ThreadLocal<@Nullable EntityType> nextEntityType = new ThreadLocal<>();
 
 	public ForcingEntitySpawner(SKShopkeepersPlugin plugin) {
 		this.plugin = plugin;
@@ -42,14 +43,14 @@ public class ForcingEntitySpawner implements Listener {
 
 	@EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
 	void onEntitySpawn(EntitySpawnEvent event) {
-		if (nextSpawnLocation == null) return;
+		if (nextSpawnLocation.get() == null) return;
 		if (this.matchesForcedCreatureSpawn(event)) {
 			event.setCancelled(false);
 		} else {
 			// Unexpected.
 			Log.debug(() -> "Forced entity spawning seems to be out of sync: "
-					+ "Forced spawning was activated for an entity of type " + nextEntityType
-					+ " at location " + nextSpawnLocation + ", but a different entity of type "
+					+ "Forced spawning was activated for an entity of type " + nextEntityType.get()
+					+ " at location " + nextSpawnLocation.get() + ", but a different entity of type "
 					+ event.getEntityType() + " was spawned at location " + event.getLocation()
 					+ ".");
 		}
@@ -58,8 +59,8 @@ public class ForcingEntitySpawner implements Listener {
 	}
 
 	private boolean matchesForcedCreatureSpawn(EntitySpawnEvent event) {
-		return event.getEntityType() == nextEntityType
-				&& LocationUtils.getSafeDistanceSquared(event.getLocation(), nextSpawnLocation) < 0.6D;
+		return event.getEntityType() == nextEntityType.get()
+				&& LocationUtils.getSafeDistanceSquared(event.getLocation(), nextSpawnLocation.get()) < 0.6D;
 	}
 
 	/**
@@ -72,15 +73,15 @@ public class ForcingEntitySpawner implements Listener {
 	 *            the entity type
 	 */
 	public void forceEntitySpawn(Location location, EntityType entityType) {
-		this.nextSpawnLocation = location;
-		this.nextEntityType = entityType;
+		this.nextSpawnLocation.set(location.clone());
+		this.nextEntityType.set(entityType);
 	}
 
 	/**
 	 * Resets any pending forced entity spawn.
 	 */
 	public void resetForcedEntitySpawn() {
-		nextSpawnLocation = null;
-		nextEntityType = null;
+		nextSpawnLocation.remove();
+		nextEntityType.remove();
 	}
 }

@@ -2,7 +2,9 @@ package com.nisovin.shopkeepers.shopobjects.living;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
@@ -27,6 +29,7 @@ import com.nisovin.shopkeepers.api.shopkeeper.ShopCreationData;
 import com.nisovin.shopkeepers.api.shopkeeper.Shopkeeper;
 import com.nisovin.shopkeepers.api.shopobjects.living.LivingShopEquipment;
 import com.nisovin.shopkeepers.api.shopobjects.living.LivingShopObject;
+import com.nisovin.shopkeepers.api.util.UnmodifiableItemStack;
 import com.nisovin.shopkeepers.compat.Compat;
 import com.nisovin.shopkeepers.config.Settings;
 import com.nisovin.shopkeepers.debug.DebugOptions;
@@ -472,6 +475,11 @@ public class SKLivingShopObject<E extends LivingEntity>
 	private Button getEquipmentEditorButton() {
 		return new ShopkeeperActionButton() {
 			@Override
+			protected boolean requiresShopOwner() {
+				return false;
+			}
+
+			@Override
 			public @Nullable ItemStack getIcon() {
 				return getEquipmentEditorItem();
 			}
@@ -495,20 +503,42 @@ public class SKLivingShopObject<E extends LivingEntity>
 
 	@Override
 	public boolean openEquipmentEditor(Player player, boolean editAllSlots) {
+		var registry = com.nisovin.shopkeepers.SKShopkeepersPlugin.getInstance()
+				.getShopkeeperRegistry();
+		if (!registry.isOwnerThread(shopkeeper)) {
+			registry.runOnOwner(shopkeeper, () -> this.openEquipmentEditor(player, editAllSlots));
+			return true;
+		}
+
+		Map<EquipmentSlot, UnmodifiableItemStack> equipment = new HashMap<>();
+		this.getEquipment().getItems().forEach((slot, item) ->
+				equipment.put(slot, UnmodifiableItemStack.ofNonNull(item.copy())));
 		var config = new EquipmentEditorUIState(
 				editAllSlots ? EquipmentUtils.EQUIPMENT_SLOTS : this.getEditableEquipmentSlots(),
-				this.getEquipment().getItems(),
+				Map.copyOf(equipment),
 				(equipmentSlot, item) -> {
-					this.getEquipment().setItem(equipmentSlot, item);
+					var copy = UnmodifiableItemStack.of(ItemUtils.copyOrNull(item));
+					registry.runOnOwner(shopkeeper, () -> {
+						if (!shopkeeper.isValid()) return false;
+						this.getEquipment().setItem(equipmentSlot, copy);
 
-					// Call shopkeeper edited event:
-					Shopkeeper shopkeeper = this.getShopkeeper();
-					Bukkit.getPluginManager().callEvent(new ShopkeeperEditedEvent(shopkeeper, player));
+						// Call shopkeeper edited event:
+						Shopkeeper shopkeeper = this.getShopkeeper();
+						Bukkit.getPluginManager().callEvent(new ShopkeeperEditedEvent(shopkeeper, player));
 
-					// Save:
-					shopkeeper.save();
+						// Save:
+						shopkeeper.save();
+						return true;
+					});
 				}
 		);
+		if (com.nisovin.shopkeepers.SKShopkeepersPlugin.getInstance().getFoliaLib().isFolia()) {
+			registry.runOnSender(player, () -> {
+				if (shopkeeper.isValid()) EquipmentEditorUI.request(shopkeeper, player, config);
+			});
+			return true;
+		}
+
 		return EquipmentEditorUI.request(shopkeeper, player, config);
 	}
 }

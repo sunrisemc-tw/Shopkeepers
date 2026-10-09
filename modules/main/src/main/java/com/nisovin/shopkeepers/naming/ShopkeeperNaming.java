@@ -1,9 +1,12 @@
 package com.nisovin.shopkeepers.naming;
 
+import java.util.concurrent.CompletableFuture;
+
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 
 import com.nisovin.shopkeepers.api.events.ShopkeeperEditedEvent;
+import com.nisovin.shopkeepers.SKShopkeepersPlugin;
 import com.nisovin.shopkeepers.api.shopkeeper.Shopkeeper;
 import com.nisovin.shopkeepers.input.InputRequest;
 import com.nisovin.shopkeepers.input.chat.ChatInput;
@@ -29,7 +32,7 @@ public class ShopkeeperNaming {
 
 		@Override
 		public void onInput(String message) {
-			requestNameChange(player, shopkeeper, message);
+			requestNameChangeAsync(player, shopkeeper, message);
 		}
 	}
 
@@ -64,6 +67,9 @@ public class ShopkeeperNaming {
 		Validate.notNull(player, "player is null");
 		Validate.notNull(shopkeeper, "shopkeeper is null");
 		Validate.notNull(newName, "newName is null");
+		Validate.State.isTrue(SKShopkeepersPlugin.getInstance().getShopkeeperRegistry()
+				.isOwnerThread((AbstractShopkeeper) shopkeeper),
+				"Name changes require the shop owner. Use requestNameChangeAsync.");
 		if (!shopkeeper.isValid()) return false;
 
 		// Prepare the new name:
@@ -80,7 +86,9 @@ public class ShopkeeperNaming {
 				String newNameFinal = preparedName;
 				Log.debug(() -> shopkeeper.getLogPrefix() + "Player " + player.getName()
 						+ " tried to set an invalid name: '" + newNameFinal + "'");
-				TextUtils.sendMessage(player, Messages.nameInvalid, "name", preparedName);
+				String invalidName = preparedName;
+				this.feedback(player, () -> TextUtils.sendMessage(
+						player, Messages.nameInvalid.copy(), "name", invalidName));
 				return false;
 			}
 		}
@@ -93,14 +101,14 @@ public class ShopkeeperNaming {
 
 		// Compare the new name to the previous name:
 		if (oldName.equals(actualNewName)) {
-			TextUtils.sendMessage(player, Messages.nameHasNotChanged,
-					"name", Text.parse(actualNewName)
-			);
+			this.feedback(player, () -> TextUtils.sendMessage(player, Messages.nameHasNotChanged.copy(),
+					"name", Text.parse(actualNewName)));
 			return false;
 		}
 
 		// Inform player:
-		TextUtils.sendMessage(player, Messages.nameSet, "name", Text.parse(actualNewName));
+		this.feedback(player, () -> TextUtils.sendMessage(
+				player, Messages.nameSet.copy(), "name", Text.parse(actualNewName)));
 
 		// Close all open windows:
 		shopkeeper.abortUISessionsDelayed(); // TODO Really needed?
@@ -111,5 +119,24 @@ public class ShopkeeperNaming {
 		// Save:
 		shopkeeper.save();
 		return true;
+	}
+
+	public CompletableFuture<Boolean> requestNameChangeAsync(
+			Player player,
+			Shopkeeper shopkeeper,
+			String newName
+	) {
+		var registry = SKShopkeepersPlugin.getInstance().getShopkeeperRegistry();
+		CompletableFuture<Boolean> result = registry
+				.runOnOwner((AbstractShopkeeper) shopkeeper,
+						() -> this.requestNameChange(player, shopkeeper, newName));
+		return result.whenComplete((success, error) -> {
+					if (error != null) registry.runOnSender(player,
+							() -> player.sendMessage("Shopkeeper rename failed."));
+				});
+	}
+
+	private void feedback(Player player, Runnable action) {
+		SKShopkeepersPlugin.getInstance().getShopkeeperRegistry().runOnSender(player, action);
 	}
 }

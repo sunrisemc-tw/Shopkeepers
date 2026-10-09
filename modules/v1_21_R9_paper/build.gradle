@@ -4,3 +4,8 @@ ext {
 
 apply from: rootProject.file('modules/shared/nmsModulePaper.gradle')
 
+// The dev bundle omits the version of this server-only dependency.
+dependencies {
+	implementation platform('net.kyori:adventure-bom:4.26.1')
+}
+

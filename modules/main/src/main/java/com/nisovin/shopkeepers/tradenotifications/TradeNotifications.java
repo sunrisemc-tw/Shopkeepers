@@ -28,6 +28,7 @@ import com.nisovin.shopkeepers.shopkeeper.AbstractShopkeeper;
 import com.nisovin.shopkeepers.text.ClickEventText.Action;
 import com.nisovin.shopkeepers.text.Text;
 import com.nisovin.shopkeepers.util.bukkit.PermissionUtils;
+import com.nisovin.shopkeepers.util.bukkit.SchedulerUtils;
 import com.nisovin.shopkeepers.util.bukkit.TextUtils;
 import com.nisovin.shopkeepers.util.inventory.ItemUtils;
 import com.nisovin.shopkeepers.util.java.Lazy;
@@ -178,7 +179,8 @@ public class TradeNotifications implements Listener {
 	private final NotificationUserPreferences userPreferences;
 	private final TradeMerger tradeMerger;
 
-	private boolean enabled;
+	private volatile boolean enabled;
+	private volatile long generation;
 
 	public TradeNotifications(Plugin plugin) {
 		Validate.notNull(plugin, "plugin is null");
@@ -203,6 +205,7 @@ public class TradeNotifications implements Listener {
 	public void onDisable() {
 		if (!enabled) return;
 		enabled = false;
+		generation++;
 
 		tradeMerger.onDisable();
 		userPreferences.onDisable();
@@ -215,10 +218,12 @@ public class TradeNotifications implements Listener {
 
 	@EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
 	void onTradeCompleted(ShopkeeperTradeCompletedEvent event) {
+		if (!enabled) return;
 		tradeMerger.mergeTrade(event.getCompletedTrade());
 	}
 
 	private void onTradesCompleted(MergedTrades mergedTrades) {
+		if (!enabled) return;
 		TradeContext tradeContext = new TradeContext(mergedTrades);
 		this.sendTradeNotifications(tradeContext);
 		this.sendShopMemberTradeNotifications(tradeContext);
@@ -235,9 +240,9 @@ public class TradeNotifications implements Listener {
 			tradeNotificationPermission = ShopkeepersPlugin.TRADE_NOTIFICATIONS_PLAYER;
 		}
 
-		Lazy<Text> tradeNotification = new Lazy<>(
-				() -> this.getTradeNotificationMessage(tradeContext)
-		);
+		Text tradeNotification = this.getTradeNotificationMessage(tradeContext);
+		String permission = tradeNotificationPermission;
+		long notificationGeneration = generation;
 		for (Player player : Bukkit.getOnlinePlayers()) {
 			assert player != null;
 			// Avoid notifying the shop owner twice.
@@ -247,14 +252,14 @@ public class TradeNotifications implements Listener {
 			if (Settings.notifyShopMembersAboutTrades && this.isShopMember(shopkeeper, player)) {
 				continue;
 			}
-			if (!userPreferences.isNotifyOnTrades(player)) continue;
-			if (!PermissionUtils.hasPermission(player, tradeNotificationPermission)) continue;
-
-			// Note: We also send trade notifications for own trades (i.e. when the trading player
-			// matches the recipient of the notification).
-			TextUtils.sendMessage(player, tradeNotification.get());
-			Settings.tradeNotificationSound.play(player);
-			this.sendDisableTradeNotificationsHint(player);
+			SchedulerUtils.runTaskOrOmit(player, () -> {
+				if (!enabled || generation != notificationGeneration || !player.isOnline()) return;
+				if (!userPreferences.isNotifyOnTrades(player)) return;
+				if (!PermissionUtils.hasPermission(player, permission)) return;
+				TextUtils.sendMessage(player, tradeNotification.copy());
+				Settings.tradeNotificationSound.play(player);
+				this.sendDisableTradeNotificationsHint(player);
+			});
 		}
 	}
 
@@ -316,6 +321,9 @@ public class TradeNotifications implements Listener {
 		MessageArguments shopMsgArgs = tradeContext.getShopMessageArguments();
 		Map<String, Object> tradeMsgArgs = tradeContext.getTradeMessageArguments();
 
+		message = message.copy();
+		shopText = shopText.copy();
+		tradeCountText = tradeCountText.copy();
 		shopText.setPlaceholderArguments(shopMsgArgs);
 		// TODO Display more shop information as hover text? Add a click event or insertion text to
 		// automatically copy the shop coordinates or id, or insert a teleport command to teleport
@@ -339,14 +347,14 @@ public class TradeNotifications implements Listener {
 		@Nullable Text message = null;
 
 		@Nullable Player owner = playerShop.getOwner();
-		if (owner != null && userPreferences.isNotifyOnTrades(owner)) {
+		if (owner != null) {
 			message = this.getOwnerTradeNotificationMessage(tradeContext);
 			this.sendShopMemberTradeNotification(owner, message);
 		}
 
 		for (var shopMember : playerShop.getMembers()) {
 			var memberPlayer = shopMember.getUser().getPlayer();
-			if (memberPlayer != null && userPreferences.isNotifyOnTrades(memberPlayer)) {
+			if (memberPlayer != null) {
 				if (message == null) {
 					message = this.getOwnerTradeNotificationMessage(tradeContext);
 				}
@@ -359,9 +367,14 @@ public class TradeNotifications implements Listener {
 	private void sendShopMemberTradeNotification(Player shopMember, Text message) {
 		// Note: We also send trade notifications for own trades (i.e. when the trading player
 		// matches the recipient of the notification).
-		TextUtils.sendMessage(shopMember, message);
-		Settings.shopMemberTradeNotificationSound.play(shopMember);
-		this.sendDisableTradeNotificationsHint(shopMember);
+		long notificationGeneration = generation;
+		SchedulerUtils.runTaskOrOmit(shopMember, () -> {
+			if (!enabled || generation != notificationGeneration || !shopMember.isOnline()) return;
+			if (!userPreferences.isNotifyOnTrades(shopMember)) return;
+			TextUtils.sendMessage(shopMember, message.copy());
+			Settings.shopMemberTradeNotificationSound.play(shopMember);
+			this.sendDisableTradeNotificationsHint(shopMember);
+		});
 	}
 
 	private Text getOwnerTradeNotificationMessage(TradeContext tradeContext) {
@@ -421,7 +434,7 @@ public class TradeNotifications implements Listener {
 		Text command = Messages.disableTradeNotificationsHintCommand.copy(); // TODO Avoid copy
 		Text commandText = Text.clickEvent(Action.SUGGEST_COMMAND, command.toPlainText())
 				.next(command).getRoot();
-		TextUtils.sendMessage(player, Messages.disableTradeNotificationsHint,
+		TextUtils.sendMessage(player, Messages.disableTradeNotificationsHint.copy(),
 				"command", commandText
 		);
 	}

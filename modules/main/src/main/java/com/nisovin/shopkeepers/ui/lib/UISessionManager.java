@@ -3,12 +3,13 @@ package com.nisovin.shopkeepers.ui.lib;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.bukkit.Bukkit;
+import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.plugin.Plugin;
@@ -68,7 +69,7 @@ public final class UISessionManager {
 	private final UIListener uiListener;
 
 	// Player id -> View
-	private final Map<UUID, View> uiSessions = new HashMap<>();
+	private final Map<UUID, View> uiSessions = new ConcurrentHashMap<>();
 	private final Collection<? extends View> uiSessionsView
 			= Collections.unmodifiableCollection(uiSessions.values());
 
@@ -89,7 +90,14 @@ public final class UISessionManager {
 	// Note: Further calls to abort UI sessions are allowed even after disabling.
 	public void onDisable() {
 		// Close all open views:
-		this.abortUISessions();
+		if (com.nisovin.shopkeepers.SKShopkeepersPlugin.getInstance().getFoliaLib().isFolia()
+				&& !plugin.isEnabled()) {
+			uiSessions.values().forEach(View::onSessionEnd);
+			uiSessions.clear();
+		} else {
+			this.abortUISessions();
+		}
+
 		uiListener.onDisable();
 	}
 
@@ -110,6 +118,20 @@ public final class UISessionManager {
 			Player player,
 			boolean silentRequest,
 			UIState uiState
+	) {
+		return this.requestUI(viewProvider, player, silentRequest, uiState, null);
+	}
+
+	public boolean requestPreparedUI(View view, Player player, UIState uiState) {
+		return this.requestUI(view.getProvider(), player, false, uiState, view);
+	}
+
+	private boolean requestUI(
+			ViewProvider viewProvider,
+			Player player,
+			boolean silentRequest,
+			UIState uiState,
+			@Nullable View prepared
 	) {
 		Validate.notNull(viewProvider, "viewProvider is null");
 		Validate.notNull(player, "player is null");
@@ -165,7 +187,7 @@ public final class UISessionManager {
 		// Instantiate the new view:
 		Log.debug(() -> "Opening UI '" + uiIdentifier + "' for player " + player.getName()
 				+ " ...");
-		View view = viewProvider.createView(player, uiState);
+		View view = prepared != null ? prepared : viewProvider.createView(player, uiState);
 		if (view == null) {
 			Log.debug(() -> "Failed to instantiate UI '" + uiIdentifier + "'!");
 			return false;
@@ -275,6 +297,13 @@ public final class UISessionManager {
 		if (!uiSession.isValid()) return;
 
 		Player player = uiSession.getPlayer();
+		if (com.nisovin.shopkeepers.SKShopkeepersPlugin.getInstance().getFoliaLib().isFolia()
+				&& !com.nisovin.shopkeepers.SKShopkeepersPlugin.getInstance().getFoliaLib()
+						.getScheduler().isOwnedByCurrentRegion(player)) {
+			SchedulerUtils.runTaskOrOmit(player, () -> this.abort(uiSession));
+			return;
+		}
+		if (this.getUISession(player) != uiSession) return;
 		this.endUISession(player, null);
 		player.closeInventory();
 	}
@@ -282,7 +311,8 @@ public final class UISessionManager {
 	public void abortUISessions() {
 		// Copy to prevent concurrent modifications:
 		new ArrayList<>(this.getUISessions()).forEach(View::abort);
-		assert uiSessions.isEmpty();
+		assert com.nisovin.shopkeepers.SKShopkeepersPlugin.getInstance().getFoliaLib().isFolia()
+				|| uiSessions.isEmpty();
 	}
 
 	public void abortUISessionsForContext(Object contextObject) {
@@ -295,25 +325,32 @@ public final class UISessionManager {
 		this.getUISessionsForContext(contextObject, uiType).forEach(View::abort);
 	}
 
-	public void abortUISessionsForContextDelayed(Object contextObject) {
+	// The location identifies the region the delayed task is run on (e.g. the context shopkeeper's
+	// location). It may be null if there is no associated region, in which case the task is run on
+	// the current thread.
+	public void abortUISessionsForContextDelayed(@Nullable Location location, Object contextObject) {
 		Validate.notNull(contextObject, "context is null");
 
 		// Deactivate currently active UIs for this subject:
 		this.deactivateUIsForContext(contextObject);
 
-		SchedulerUtils.runTaskOrOmit(plugin, () -> {
+		SchedulerUtils.runTaskOrOmit(location, () -> {
 			this.abortUISessionsForContext(contextObject);
 		});
 	}
 
-	public void abortUISessionsForContextDelayed(Object contextObject, UIType uiType) {
+	public void abortUISessionsForContextDelayed(
+			@Nullable Location location,
+			Object contextObject,
+			UIType uiType
+	) {
 		Validate.notNull(contextObject, "context is null");
 		Validate.notNull(uiType, "uiType is null");
 
 		// Deactivate currently active UIs for this subject:
 		this.deactivateUIsForContext(contextObject, uiType);
 
-		SchedulerUtils.runTaskOrOmit(plugin, () -> {
+		SchedulerUtils.runTaskOrOmit(location, () -> {
 			this.abortUISessionsForContext(contextObject, uiType);
 		});
 	}

@@ -3,7 +3,9 @@ package com.nisovin.shopkeepers.shopobjects.entity.base;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 
 import org.bukkit.Difficulty;
 import org.bukkit.Location;
@@ -17,6 +19,7 @@ import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import com.nisovin.shopkeepers.SKShopkeepersPlugin;
+import com.nisovin.shopkeepers.util.bukkit.SchedulerUtils;
 import com.nisovin.shopkeepers.api.internal.util.Unsafe;
 import com.nisovin.shopkeepers.api.shopkeeper.ShopCreationData;
 import com.nisovin.shopkeepers.api.shopobjects.entity.EntityShopObject;
@@ -41,6 +44,7 @@ import com.nisovin.shopkeepers.util.bukkit.WorldUtils;
 import com.nisovin.shopkeepers.util.data.serialization.InvalidDataException;
 import com.nisovin.shopkeepers.util.java.CyclicCounter;
 import com.nisovin.shopkeepers.util.java.RateLimiter;
+import com.nisovin.shopkeepers.util.java.Validate;
 import com.nisovin.shopkeepers.util.logging.Log;
 
 /**
@@ -78,12 +82,15 @@ public abstract class BaseEntityShopObject<E extends Entity>
 	protected static final int MAX_RESPAWN_ATTEMPTS = 5;
 	protected static final int THROTTLED_CHECK_PERIOD_SECONDS = 60;
 
-	private static final Location sharedLocation = new Location(null, 0, 0, 0);
+	private static synchronized int nextCheckingOffset() {
+		return nextCheckingOffset.getAndIncrement();
+	}
 
 	protected final BaseEntityShopObjectCreationContext context;
 	private final BaseEntityShopObjectType<?> shopObjectType;
 
-	private @Nullable E entity;
+	private volatile @Nullable E entity;
+	private volatile boolean moving;
 	private @Nullable Location lastSpawnLocation = null;
 	private int respawnAttempts = 0;
 	private boolean debuggingSpawn = false;
@@ -92,7 +99,7 @@ public abstract class BaseEntityShopObject<E extends Entity>
 	private static final long SPAWN_DEBUG_THROTTLE_MILLIS = TimeUnit.MINUTES.toMillis(5);
 
 	// Initial threshold between [1, CHECK_PERIOD_SECONDS] for load balancing:
-	private final int checkingOffset = nextCheckingOffset.getAndIncrement();
+	private final int checkingOffset = nextCheckingOffset();
 	private final RateLimiter checkLimiter = new RateLimiter(CHECK_PERIOD_SECONDS, checkingOffset);
 	private boolean skipRespawnAttemptsIfPeaceful = false;
 
@@ -149,6 +156,10 @@ public abstract class BaseEntityShopObject<E extends Entity>
 		Location spawnLocation = shopkeeper.getLocation();
 		if (spawnLocation == null) return null; // World not loaded
 
+		return this.prepareSpawnLocation(spawnLocation);
+	}
+
+	private Location prepareSpawnLocation(Location spawnLocation) {
 		spawnLocation.add(0.5D, 0.0D, 0.5D); // Center of block
 
 		if (this.shallAdjustSpawnLocation()) {
@@ -183,9 +194,9 @@ public abstract class BaseEntityShopObject<E extends Entity>
 		if (!collidableFluids.isEmpty()) {
 			World world = Unsafe.assertNonNull(spawnLocation.getWorld());
 			Block blockAbove = world.getBlockAt(
-					shopkeeper.getX(),
-					shopkeeper.getY() + 1,
-					shopkeeper.getZ()
+					spawnLocation.getBlockX(),
+					spawnLocation.getBlockY() + 1,
+					spawnLocation.getBlockZ()
 			);
 			if (blockAbove.isLiquid()) {
 				collidableFluids = Collections.emptySet();
@@ -461,23 +472,107 @@ public abstract class BaseEntityShopObject<E extends Entity>
 		Entity entity = this.entity;
 		if (entity == null) return false; // Ignore if not spawned
 
+		if (SKShopkeepersPlugin.getInstance().getFoliaLib().isFolia()) {
+			Location destination = shopkeeper.getLocation();
+			if (destination == null) return false;
+			this.moveAsync(destination, shopkeeper::isValid);
+			// The synchronous API cannot report an asynchronous teleport as completed.
+			return false;
+		}
+
 		Location spawnLocation = this.getSpawnLocation();
 		if (spawnLocation == null) return false;
 
 		this.lastSpawnLocation = spawnLocation;
 		boolean teleportSuccess = SKShopkeepersPlugin.getInstance().getForcingEntityTeleporter()
-				.teleport(entity, spawnLocation);
+				.teleport(entity, spawnLocation).getNow(false);
 
-		// Inform the AI system:
 		context.baseEntityShops.getEntityAI().updateLocation(this);
-
 		return teleportSuccess;
+	}
+
+	public CompletableFuture<Boolean> moveAsync(Location destination, BooleanSupplier commit) {
+		@Nullable E entity = this.entity;
+		if (entity == null || moving) return CompletableFuture.completedFuture(false);
+		SKShopkeepersPlugin plugin = SKShopkeepersPlugin.getInstance();
+		Validate.State.isTrue(plugin.getShopkeeperRegistry().isOwnerThread(shopkeeper),
+				"Entity moves require the entity owner.");
+		moving = true;
+		CompletableFuture<Boolean> result =
+				plugin.getShopkeeperRegistry().trackOwnerOperation(new CompletableFuture<>());
+		result.whenComplete((success, error) -> {
+			moving = false;
+			if (!Boolean.TRUE.equals(success)) {
+				plugin.getShopkeeperRegistry().runOnOwner(shopkeeper, () -> {
+					if (this.entity == entity && shopkeeper.isValid()
+							&& shopkeeper.getShopObject() == this && entity.isValid()) {
+						context.baseEntityShops.getEntityAI().updateLocation(this);
+					}
+
+					return true;
+				});
+			}
+		});
+		// Pause AI while the entity and its persisted location have different owners.
+		this.cleanupAI();
+		if (SchedulerUtils.runTaskOrOmit(destination, () -> {
+			if (result.isDone()) return;
+			Location spawnLocation;
+			try {
+				spawnLocation = this.prepareSpawnLocation(destination.clone());
+			} catch (Throwable error) {
+				result.completeExceptionally(error);
+				return;
+			}
+
+			plugin.getShopkeeperRegistry().runOnOwner(shopkeeper, () -> {
+				if (this.entity != entity || !shopkeeper.isValid()) {
+					result.complete(false);
+					return false;
+				}
+
+				plugin.getForcingEntityTeleporter().teleport(entity, spawnLocation)
+						.whenComplete((success, error) -> {
+							plugin.getShopkeeperRegistry().runOnOwner(shopkeeper, () -> {
+								if (this.entity != entity || !shopkeeper.isValid()) {
+									result.complete(false);
+									return false;
+								}
+
+								boolean moved = error == null && Boolean.TRUE.equals(success);
+								if (moved) {
+									moved = commit.getAsBoolean();
+									if (moved && this.entity == entity) {
+										this.lastSpawnLocation = spawnLocation;
+									}
+								}
+
+								if (moved && this.entity == entity && entity.isValid()) {
+									context.baseEntityShops.getEntityAI().updateLocation(this);
+								}
+
+								result.complete(moved);
+								return moved;
+							}).whenComplete((value, failure) -> {
+								if (failure != null) result.completeExceptionally(failure);
+							});
+						});
+				return true;
+			}).whenComplete((value, error) -> {
+				if (error != null) result.completeExceptionally(error);
+			});
+		}) == null) {
+			result.complete(false);
+		}
+
+		return result;
 	}
 
 	// TICKING
 
 	@Override
 	public void onTick() {
+		if (moving) return;
 		super.onTick();
 		if (checkLimiter.request()) {
 			if (this.isSpawningScheduled()) {
@@ -617,7 +712,7 @@ public abstract class BaseEntityShopObject<E extends Entity>
 		// shopkeeper mob up to one block below their location when they are respawned (we just
 		// don't move them there dynamically during this check). If the mob is supposed to
 		// dynamically move when the block below it is broken, gravity needs to be enabled.
-		Location entityLoc = Unsafe.assertNonNull(entity.getLocation(sharedLocation));
+		Location entityLoc = Unsafe.assertNonNull(entity.getLocation());
 		Location lastSpawnLocation = Unsafe.assertNonNull(this.lastSpawnLocation);
 		// This also account for the worlds being different:
 		if (LocationUtils.getDistanceSquared(entityLoc, lastSpawnLocation) > 0.2D) {
@@ -635,25 +730,48 @@ public abstract class BaseEntityShopObject<E extends Entity>
 			// due to gravity and then placing a block below its actual spawn location for the
 			// shopkeeper to now be able to stand on.
 			// Non-null: This is only called for shopkeepers in active chunks, i.e. loaded worlds.
-			Location spawnLocation = Unsafe.assertNonNull(this.getSpawnLocation());
-			spawnLocation.setYaw(entityLoc.getYaw());
-			spawnLocation.setPitch(entityLoc.getPitch());
-			this.lastSpawnLocation = spawnLocation;
-
-			SKShopkeepersPlugin.getInstance().getForcingEntityTeleporter()
-					.teleport(entity, spawnLocation);
-
-			this.overwriteAI();
+			var plugin = SKShopkeepersPlugin.getInstance();
+			if (plugin.getFoliaLib().isFolia()) {
+				Location destination = Unsafe.assertNonNull(shopkeeper.getLocation());
+				destination.setYaw(entityLoc.getYaw());
+				destination.setPitch(entityLoc.getPitch());
+				this.moveAsync(destination, shopkeeper::isValid).thenAccept(success -> {
+					if (success && plugin.isEnabled() && shopkeeper.isValid()) {
+						plugin.getShopkeeperRegistry().runOnOwner(shopkeeper, () -> {
+							if (this.entity != entity || moving || !shopkeeper.isValid()) return false;
+							this.overwriteAI();
+							return true;
+						});
+					}
+				});
+			} else {
+				Location spawnLocation = Unsafe.assertNonNull(this.getSpawnLocation());
+				spawnLocation.setYaw(entityLoc.getYaw());
+				spawnLocation.setPitch(entityLoc.getPitch());
+				this.lastSpawnLocation = spawnLocation;
+				SKShopkeepersPlugin.getInstance().getForcingEntityTeleporter()
+						.teleport(entity, spawnLocation);
+				this.overwriteAI();
+			}
 		}
-		sharedLocation.setWorld(null); // Reset
+
 	}
 
 	public void teleportBack() {
+		if (moving) return;
 		@Nullable E entity = this.getEntity(); // Null if not spawned
 		if (entity == null) return;
 
 		Location lastSpawnLocation = Unsafe.assertNonNull(this.lastSpawnLocation);
 		Location entityLoc = entity.getLocation();
+		if (SKShopkeepersPlugin.getInstance().getFoliaLib().isFolia()) {
+			Location destination = Unsafe.assertNonNull(shopkeeper.getLocation());
+			destination.setYaw(entityLoc.getYaw());
+			destination.setPitch(entityLoc.getPitch());
+			this.moveAsync(destination, shopkeeper::isValid);
+			return;
+		}
+
 		lastSpawnLocation.setYaw(entityLoc.getYaw());
 		lastSpawnLocation.setPitch(entityLoc.getPitch());
 

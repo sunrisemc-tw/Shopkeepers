@@ -2,6 +2,8 @@ package com.nisovin.shopkeepers.commands.shopkeepers;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicIntegerArray;
 
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -13,6 +15,7 @@ import org.bukkit.entity.Villager;
 import org.bukkit.inventory.EntityEquipment;
 import org.bukkit.inventory.MerchantRecipe;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.checker.nullness.qual.NonNull;
 
 import com.nisovin.shopkeepers.SKShopkeepersPlugin;
 import com.nisovin.shopkeepers.api.ShopkeepersPlugin;
@@ -100,53 +103,57 @@ class CommandReplaceAllWithVanillaVillagers extends Command {
 			return;
 		}
 
-		int invalidShops = 0;
-		int deletedAdminShopsCount = 0;
-		int deletedPlayerShopsCount = 0;
-		int skippedShopsCount = 0;
+		AtomicIntegerArray counts = new AtomicIntegerArray(4);
+		List<CompletableFuture<@Nullable Void>> operations = new ArrayList<>();
 		for (AbstractShopkeeper shopkeeper : shopkeepers) {
-			// Skip the shopkeeper if it no longer exists:
-			if (!shopkeeper.isValid()) {
-				invalidShops++;
-				continue;
-			}
+			operations.add(shopkeeperRegistry.runOnOwner(shopkeeper, () -> {
+				// Skip the shopkeeper if it no longer exists:
+				if (!shopkeeper.isValid()) {
+					return 0;
+				}
 
-			// Note: No need to call a PlayerDeleteShopkeeperEvent here, or pass the sender player
-			// to shopkeeper.delete(): This action is run by an admin with the intention to
-			// delete/replace all shopkeepers. There is no need to perform additional deletion logic
-			// (e.g. returning shop creation items, etc.).
+				// Note: No need to call a PlayerDeleteShopkeeperEvent here, or pass the sender player
+				// to shopkeeper.delete(): This action is run by an admin with the intention to
+				// delete/replace all shopkeepers. There is no need to perform additional deletion logic
+				// (e.g. returning shop creation items, etc.).
 
-			// Try to spawn a corresponding vanilla villager:
-			// A villager is spawned regardless of the object type (sign, NPC, other mob type,
-			// etc.).
-			if (!this.spawnVanillaVillager(sender, shopkeeper)) {
-				skippedShopsCount++;
-				continue;
-			}
+				// Try to spawn a corresponding vanilla villager:
+				// A villager is spawned regardless of the object type (sign, NPC, other mob type,
+				// etc.).
+				if (!this.spawnVanillaVillager(sender, shopkeeper)) {
+					return 3;
+				}
 
-			// Delete the shopkeeper:
-			shopkeeper.delete();
-			if (shopkeeper instanceof PlayerShopkeeper) {
-				deletedPlayerShopsCount++;
-			} else {
-				deletedAdminShopsCount++;
-			}
+				// Delete the shopkeeper:
+				shopkeeper.delete();
+				return shopkeeper.isValid() ? 3 : (shopkeeper instanceof PlayerShopkeeper ? 2 : 1);
+			}).handle((outcome, error) -> {
+				counts.incrementAndGet(error == null ? outcome : (!shopkeeper.isValid() ? 0 : 3));
+				return null;
+			}));
 		}
 
-		// Trigger save:
-		plugin.getShopkeeperStorage().save();
+		CompletableFuture.allOf(operations.toArray(new @NonNull CompletableFuture<?>[0]))
+				.thenRun(() -> shopkeeperRegistry.runOnSender(sender, () -> {
+				int invalidShops = counts.get(0);
+				int deletedAdminShopsCount = counts.get(1);
+				int deletedPlayerShopsCount = counts.get(2);
+				int skippedShopsCount = counts.get(3);
+				// Trigger save:
+				plugin.getShopkeeperStorage().save();
 
-		// Print the result messages:
-		if (invalidShops > 0) {
-			TextUtils.sendMessage(sender, Messages.shopsAlreadyRemoved,
-					"shopsCount", invalidShops
-			);
-		}
-		TextUtils.sendMessage(sender, Messages.allShopsReplacedWithVanillaVillagers,
-				"adminShopsCount", deletedAdminShopsCount,
-				"playerShopsCount", deletedPlayerShopsCount,
-				"skippedShopsCount", skippedShopsCount
-		);
+				// Print the result messages:
+				if (invalidShops > 0) {
+					TextUtils.sendMessage(sender, Messages.shopsAlreadyRemoved.copy(),
+							"shopsCount", invalidShops
+					);
+				}
+				TextUtils.sendMessage(sender, Messages.allShopsReplacedWithVanillaVillagers.copy(),
+						"adminShopsCount", deletedAdminShopsCount,
+						"playerShopsCount", deletedPlayerShopsCount,
+						"skippedShopsCount", skippedShopsCount
+				);
+				}));
 	}
 
 	private boolean spawnVanillaVillager(CommandSender sender, AbstractShopkeeper shopkeeper) {
@@ -156,7 +163,7 @@ class CommandReplaceAllWithVanillaVillagers extends Command {
 			if (!(sender instanceof ConsoleCommandSender)) {
 				Log.debug(message);
 			}
-			TextUtils.sendMessage(sender, message);
+			shopkeeperRegistry.runOnSender(sender, () -> TextUtils.sendMessage(sender, message));
 			return false;
 		}
 
@@ -167,7 +174,7 @@ class CommandReplaceAllWithVanillaVillagers extends Command {
 			if (!(sender instanceof ConsoleCommandSender)) {
 				Log.debug(message);
 			}
-			TextUtils.sendMessage(sender, message);
+			shopkeeperRegistry.runOnSender(sender, () -> TextUtils.sendMessage(sender, message));
 			return false;
 		}
 
@@ -204,7 +211,7 @@ class CommandReplaceAllWithVanillaVillagers extends Command {
 			if (!(sender instanceof ConsoleCommandSender)) {
 				Log.debug(e, () -> message);
 			}
-			TextUtils.sendMessage(sender, message);
+			shopkeeperRegistry.runOnSender(sender, () -> TextUtils.sendMessage(sender, message));
 
 			// Try to respawn the shopkeeper:
 			if (isShopkeeperSpawned) {

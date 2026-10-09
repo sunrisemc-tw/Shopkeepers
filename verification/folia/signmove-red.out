@@ -1,0 +1,8 @@
+Shopkeepers jar SHA256 dd5df1b7ca5b28664363cb08bf41b966d9763ed18c5ebdb5488b2d0dc5fc8355
+PASS enable thread=Server thread sign-move probe; player interaction NOT tested
+PASS create-sign thread=Folia Region Scheduler Thread #0 uuid=b9880a09-33cd-46e8-8ae4-e3c9705b30a4
+PASS sign-at-source thread=Folia Region Scheduler Thread #1 type=OAK_WALL_SIGN
+PASS sign-respawned-destination thread=Folia Region Scheduler Thread #1 dest=OAK_WALL_SIGN source=AIR
+PASS SIGNMOVE_COMPLETE thread=Folia Region Scheduler Thread #1 sign respawned
+PASS signmove; log=/tmp/shopkeepers-signmove-probe/signmove.log
+RED_EXIT=0

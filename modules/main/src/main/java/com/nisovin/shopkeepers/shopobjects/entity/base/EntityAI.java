@@ -14,6 +14,7 @@ import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -21,7 +22,6 @@ import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
-import org.bukkit.scheduler.BukkitTask;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import com.nisovin.shopkeepers.SKShopkeepersPlugin;
@@ -31,12 +31,14 @@ import com.nisovin.shopkeepers.compat.Compat;
 import com.nisovin.shopkeepers.config.Settings;
 import com.nisovin.shopkeepers.util.bukkit.EntityUtils;
 import com.nisovin.shopkeepers.util.bukkit.MutableChunkCoords;
+import com.nisovin.shopkeepers.util.bukkit.SchedulerUtils;
 import com.nisovin.shopkeepers.util.bukkit.WorldUtils;
 import com.nisovin.shopkeepers.util.java.CyclicCounter;
 import com.nisovin.shopkeepers.util.java.RateLimiter;
 import com.nisovin.shopkeepers.util.java.Validate;
 import com.nisovin.shopkeepers.util.timer.Timer;
 import com.nisovin.shopkeepers.util.timer.Timings;
+import com.tcoded.folialib.wrapper.task.WrappedTask;
 
 /**
  * Handles the gravity and AI behavior, e.g. looking at nearby players, of
@@ -111,8 +113,14 @@ public class EntityAI implements Listener {
 	);
 
 	// Temporarily re-used objects:
-	private static final Location sharedLocation = new Location(null, 0, 0, 0);
-	private static final MutableChunkCoords sharedChunkCoords = new MutableChunkCoords();
+	// Thread-local, because on Folia the per-entity processing runs on different region threads
+	// concurrently and must not share these mutable buffers.
+	private static final ThreadLocal<Location> sharedLocation = ThreadLocal.withInitial(
+			() -> new Location(null, 0, 0, 0)
+	);
+	private static final ThreadLocal<MutableChunkCoords> sharedChunkCoords = ThreadLocal.withInitial(
+			MutableChunkCoords::new
+	);
 
 	private final SKShopkeepersPlugin plugin;
 	/**
@@ -140,11 +148,13 @@ public class EntityAI implements Listener {
 	private static class EntityData {
 
 		private final BaseEntityShopObject<?> shopObject;
+		private final Entity entity;
 		private final ChunkData chunkData;
+		private final boolean affectedByGravity;
 		// Initial threshold between [1, FALLING_CHECK_PERIOD_TICKS] for load balancing:
 		public final RateLimiter fallingCheckLimiter = new RateLimiter(
 				FALLING_CHECK_PERIOD_TICKS,
-				nextFallingCheckOffset.getAndIncrement()
+				nextFallingCheckOffset()
 		);
 		// Note: This is used to check if the mob is currently falling and should therefore receive
 		// more frequent gravity updates. Flying entities do not use this 'falling' state, since
@@ -153,27 +163,35 @@ public class EntityAI implements Listener {
 		public boolean falling = false;
 		public double distanceToGround = 0.0D;
 
-		public EntityData(BaseEntityShopObject<?> shopObject, ChunkData chunkData) {
+		public EntityData(
+				BaseEntityShopObject<?> shopObject,
+				Entity entity,
+				ChunkData chunkData,
+				boolean affectedByGravity
+		) {
 			this.shopObject = shopObject;
+			this.entity = entity;
 			this.chunkData = chunkData;
+			this.affectedByGravity = affectedByGravity;
 		}
 
 		public boolean isAffectedByGravity() {
 			// Note: Flying mobs are also "affected" by gravity: The gravity logic periodically
 			// checks if the mob is still flying and should therefore play its flying animation.
-			switch (shopObject.getEntityType()) {
-			case SHULKER:
-				return false;
-			default:
-				return true;
-			}
+			return affectedByGravity;
+		}
+	}
+
+	private static int nextFallingCheckOffset() {
+		synchronized (nextFallingCheckOffset) {
+			return nextFallingCheckOffset.getAndIncrement();
 		}
 	}
 
 	private static class ChunkData {
 
 		private final ChunkCoords chunkCoords;
-		// We don't expect there to be many entities within a single chunk, so using a list is okay:
+		// We don't expect there to be many entities within a single chunk, so using a list is okay.
 		private final List<EntityData> entities = new ArrayList<>();
 		// Active by default for fast initial reactions in case players are nearby:
 		public boolean activeGravity;
@@ -185,14 +203,24 @@ public class EntityAI implements Listener {
 		}
 	}
 
+	// Guards both indexes, chunk activations, statistics, and task lifecycle state. Scheduler and
+	// world operations must remain outside this lock.
+	private final Object stateLock = new Object();
 	private final Map<ChunkCoords, ChunkData> chunks = new LinkedHashMap<>();
 	// Index for fast removal: Shop object -> EntityData
 	private final Map<BaseEntityShopObject<?>, EntityData> shopObjects = new HashMap<>();
 
-	private @Nullable BukkitTask aiTask = null;
-	private boolean currentlyRunning = false;
+	private @Nullable WrappedTask aiTask = null;
+	private long startingTaskLifecycle = -1L;
+	private boolean enabled = false;
+	private long lifecycle = 0L;
+	private long activationGeneration = 0L;
+	private volatile boolean currentlyRunning = false;
 
 	// Statistics:
+	// On Folia these count the currently registered entities in active chunks, not callbacks in
+	// flight. Region timings count completed per-entity samples since the last reset. The global
+	// total and activation timings measure dispatch only, without waiting for region callbacks.
 	private int activeAIChunksCount = 0;
 	private int activeAIEntityCount = 0;
 
@@ -217,6 +245,10 @@ public class EntityAI implements Listener {
 		maxFallingDistancePerUpdate = Settings.entityBehaviorTickPeriod * MAX_FALLING_DISTANCE_PER_TICK;
 		gravityCollisionCheckRange = maxFallingDistancePerUpdate + 0.1D;
 		customGravityEnabled = _isCustomGravityEnabled();
+		synchronized (stateLock) {
+			enabled = true;
+			lifecycle++;
+		}
 
 		// Register listener:
 		Bukkit.getPluginManager().registerEvents(this, plugin);
@@ -227,20 +259,34 @@ public class EntityAI implements Listener {
 
 	public void onDisable() {
 		assert !currentlyRunning;
+		synchronized (stateLock) {
+			enabled = false;
+			lifecycle++;
+			activationGeneration++;
+			chunks.clear();
+			shopObjects.clear();
+			this.resetStatistics();
+		}
+
 		HandlerList.unregisterAll(this); // Unregister listener
 		this.stopTask();
-		chunks.clear();
-		shopObjects.clear();
-		this.resetStatistics();
 	}
 
 	// SHOP OBJECTS
 
 	public void addShopObject(BaseEntityShopObject<?> shopObject) {
+		this.addShopObject(shopObject, false);
+	}
+
+	private void addShopObject(BaseEntityShopObject<?> shopObject, boolean replace) {
 		Validate.notNull(shopObject, "shopObject is null");
 		Validate.State.isTrue(!currentlyRunning,
 				"Cannot add shop objects while the AI task is running!");
-		Validate.isTrue(!shopObjects.containsKey(shopObject), "shopObject is already added");
+		long currentLifecycle;
+		synchronized (stateLock) {
+			if (!enabled) return;
+			currentLifecycle = lifecycle;
+		}
 
 		// Note: We expect that the shop object is unregistered again when its entity is despawned.
 		Entity entity = shopObject.getEntity();
@@ -250,37 +296,47 @@ public class EntityAI implements Listener {
 
 		// Determine entity chunk (asserts that the entity won't move!):
 		// We assert that the chunk is loaded (checked above by isValid call).
+		Location sharedLocation = EntityAI.sharedLocation.get();
+		MutableChunkCoords sharedChunkCoords = EntityAI.sharedChunkCoords.get();
 		Location entityLocation = Unsafe.assertNonNull(entity.getLocation(sharedLocation));
 		sharedChunkCoords.set(entityLocation);
 		sharedLocation.setWorld(null); // Reset
 
-		// Add chunk entry:
-		ChunkData chunkData = chunks.get(sharedChunkCoords);
-		if (chunkData == null) {
-			ChunkCoords chunkCoords = new ChunkCoords(sharedChunkCoords); // Copy
-			chunkData = new ChunkData(chunkCoords, customGravityEnabled);
-			chunks.put(chunkCoords, chunkData);
+		boolean folia = plugin.getFoliaLib().isFolia();
+		boolean affectedByGravity = shopObject.getEntityType() != EntityType.SHULKER;
+		synchronized (stateLock) {
+			if (!enabled || lifecycle != currentLifecycle) return;
+			if (replace) this.removeShopObject(shopObject, folia);
+			Validate.isTrue(!shopObjects.containsKey(shopObject), "shopObject is already added");
 
-			// Update chunk statistics:
+			// Add chunk entry:
+			ChunkData chunkData = chunks.get(sharedChunkCoords);
+			if (chunkData == null) {
+				ChunkCoords chunkCoords = new ChunkCoords(sharedChunkCoords); // Copy
+				chunkData = new ChunkData(chunkCoords, customGravityEnabled);
+				chunks.put(chunkCoords, chunkData);
+
+				// Update chunk statistics:
+				if (chunkData.activeAI) {
+					activeAIChunksCount++;
+				}
+				if (chunkData.activeGravity) {
+					activeGravityChunksCount++;
+				}
+			}
+
+			// Add entity entry:
+			EntityData entityData = new EntityData(shopObject, entity, chunkData, affectedByGravity);
+			shopObjects.put(shopObject, entityData);
+			chunkData.entities.add(entityData);
+
+			// Update entity statistics:
 			if (chunkData.activeAI) {
-				activeAIChunksCount++;
+				activeAIEntityCount++;
 			}
-			if (chunkData.activeGravity) {
-				activeGravityChunksCount++;
+			if (chunkData.activeGravity && (!folia || affectedByGravity)) {
+				activeGravityEntityCount++;
 			}
-		}
-
-		// Add entity entry:
-		EntityData entityData = new EntityData(shopObject, chunkData);
-		shopObjects.put(shopObject, entityData);
-		chunkData.entities.add(entityData);
-
-		// Update entity statistics:
-		if (chunkData.activeAI) {
-			activeAIEntityCount++;
-		}
-		if (chunkData.activeGravity) {
-			activeGravityEntityCount++;
 		}
 
 		// Start the AI task, if it isn't already running:
@@ -290,7 +346,14 @@ public class EntityAI implements Listener {
 	public void removeShopObject(BaseEntityShopObject<?> shopObject) {
 		Validate.State.isTrue(!currentlyRunning,
 				"Cannot remove entities while the AI task is running!");
-		// Remove shop object:
+		boolean folia = plugin.getFoliaLib().isFolia();
+		synchronized (stateLock) {
+			this.removeShopObject(shopObject, folia);
+		}
+	}
+
+	private void removeShopObject(BaseEntityShopObject<?> shopObject, boolean folia) {
+		assert Thread.holdsLock(stateLock);
 		@Nullable EntityData entityData = shopObjects.remove(shopObject);
 		if (entityData == null) return; // Shop object was not added
 
@@ -312,14 +375,13 @@ public class EntityAI implements Listener {
 		if (chunkData.activeAI) {
 			activeAIEntityCount--;
 		}
-		if (chunkData.activeGravity) {
+		if (chunkData.activeGravity && (!folia || entityData.isAffectedByGravity())) {
 			activeGravityEntityCount--;
 		}
 	}
 
 	public void updateLocation(BaseEntityShopObject<?> shopObject) {
-		this.removeShopObject(shopObject);
-		this.addShopObject(shopObject);
+		this.addShopObject(shopObject, true);
 	}
 
 	// STATISTICS
@@ -338,23 +400,33 @@ public class EntityAI implements Listener {
 	}
 
 	public int getEntityCount() {
-		return shopObjects.size();
+		synchronized (stateLock) {
+			return shopObjects.size();
+		}
 	}
 
 	public int getActiveAIChunksCount() {
-		return activeAIChunksCount;
+		synchronized (stateLock) {
+			return activeAIChunksCount;
+		}
 	}
 
 	public int getActiveAIEntityCount() {
-		return activeAIEntityCount;
+		synchronized (stateLock) {
+			return activeAIEntityCount;
+		}
 	}
 
 	public int getActiveGravityChunksCount() {
-		return activeGravityChunksCount;
+		synchronized (stateLock) {
+			return activeGravityChunksCount;
+		}
 	}
 
 	public int getActiveGravityEntityCount() {
-		return activeGravityEntityCount;
+		synchronized (stateLock) {
+			return activeGravityEntityCount;
+		}
 	}
 
 	public Timings getTotalTimings() {
@@ -376,30 +448,52 @@ public class EntityAI implements Listener {
 	// TASK
 
 	private void startTask() {
-		if (aiTask != null) return; // Already running
+		long taskLifecycle;
+		synchronized (stateLock) {
+			if (!enabled || aiTask != null || startingTaskLifecycle == lifecycle) return;
+			startingTaskLifecycle = lifecycle;
+			taskLifecycle = lifecycle;
+		}
 
 		// Start AI task:
+		// The task drives on the global thread; on Folia the per-entity processing is dispatched onto
+		// the respective entity's region (see processEntity).
 		int tickPeriod = Settings.entityBehaviorTickPeriod;
-		aiTask = Bukkit.getScheduler().runTaskTimer(
-				plugin,
-				new TickTask(),
-				tickPeriod,
-				tickPeriod
-		);
+		@Nullable WrappedTask task = null;
+		try {
+			task = SchedulerUtils.runTaskTimerGloballyOrOmit(
+					new TickTask(taskLifecycle), tickPeriod, tickPeriod
+			);
+		} finally {
+			synchronized (stateLock) {
+				if (startingTaskLifecycle == taskLifecycle) startingTaskLifecycle = -1L;
+				if (enabled && lifecycle == taskLifecycle) {
+					aiTask = task;
+					task = null;
+				}
+			}
+
+			if (task != null) task.cancel();
+		}
 	}
 
 	private void stopTask() {
-		if (aiTask != null) {
-			aiTask.cancel();
+		@Nullable WrappedTask task;
+		synchronized (stateLock) {
+			task = aiTask;
 			aiTask = null;
 		}
+
+		if (task != null) task.cancel();
 	}
 
 	private class TickTask implements Runnable {
 
 		private final RateLimiter aiActivationLimiter = new RateLimiter(AI_ACTIVATION_TICK_RATE);
+		private final long taskLifecycle;
 
-		TickTask() {
+		TickTask(long taskLifecycle) {
+			this.taskLifecycle = taskLifecycle;
 		}
 
 		@Override
@@ -407,32 +501,43 @@ public class EntityAI implements Listener {
 			// Skip if there are no entities with AI currently:
 			// Note: We keep the task running, because frequently starting and stopping the task
 			// would be associated with a certain overhead as well.
-			if (shopObjects.isEmpty()) {
-				return;
+			synchronized (stateLock) {
+				if (!enabled || lifecycle != taskLifecycle || shopObjects.isEmpty()) return;
 			}
 
-			currentlyRunning = true;
+			// On Folia, the per-entity processing is dispatched onto region threads (see
+			// processEntity), so it does not run synchronously within this driver. We therefore do not
+			// mark the AI system as 'currently running' (which would otherwise block concurrent
+			// add/remove operations from region threads), and we only measure the driver's own
+			// (synchronous) work via the total and activation timings.
+			boolean folia = plugin.getFoliaLib().isFolia();
+
+			if (!folia) {
+				currentlyRunning = true;
+			}
 
 			// Start timings:
 			totalTimings.start();
-			gravityTimings.startPaused();
-			aiTimings.startPaused();
-
-			// Freshly determine active chunks/entities (near players) every AI_ACTIVATION_TICK_RATE
-			// ticks:
-			if (aiActivationLimiter.request(Settings.entityBehaviorTickPeriod)) {
-				updateChunkActivations();
+			if (!folia) {
+				gravityTimings.startPaused();
+				aiTimings.startPaused();
 			}
 
-			// Process entities:
-			processEntities();
+			try {
+				// Recheck active chunks/entities every AI_ACTIVATION_TICK_RATE ticks:
+				if (aiActivationLimiter.request(Settings.entityBehaviorTickPeriod)) {
+					updateChunkActivations();
+				}
 
-			// Stop timings:
-			totalTimings.stop();
-			gravityTimings.stop();
-			aiTimings.stop();
-
-			currentlyRunning = false;
+				processEntities();
+			} finally {
+				totalTimings.stop();
+				if (!folia) {
+					gravityTimings.stop();
+					aiTimings.stop();
+					currentlyRunning = false;
+				}
+			}
 		}
 	}
 
@@ -441,28 +546,56 @@ public class EntityAI implements Listener {
 	private void updateChunkActivations() {
 		activationTimings.start();
 
-		// Deactivate all chunks:
-		chunks.values().forEach(chunkData -> {
-			chunkData.activeAI = false;
-			chunkData.activeGravity = false;
-		});
-		activeAIChunksCount = 0;
-		activeGravityChunksCount = 0;
+		boolean folia = plugin.getFoliaLib().isFolia();
+		try {
+			long currentLifecycle;
+			long generation;
+			synchronized (stateLock) {
+				if (!enabled) return;
+				currentLifecycle = lifecycle;
+				generation = ++activationGeneration;
+				for (ChunkData chunkData : chunks.values()) {
+					chunkData.activeAI = false;
+					chunkData.activeGravity = false;
+				}
 
-		// Activate chunks around online players:
-		for (Player player : Bukkit.getOnlinePlayers()) {
-			assert player != null;
-			this.activateNearbyChunks(player);
+				activeAIChunksCount = 0;
+				activeGravityChunksCount = 0;
+				if (folia) {
+					activeAIEntityCount = 0;
+					activeGravityEntityCount = 0;
+				}
+			}
+
+			// Player locations are read only on their owning regions.
+			for (Player player : Bukkit.getOnlinePlayers()) {
+				assert player != null;
+				if (folia) {
+					SchedulerUtils.runTaskOrOmit(player,
+							() -> this.activateNearbyChunks(player, currentLifecycle, generation));
+				} else {
+					this.activateNearbyChunks(player, currentLifecycle, generation);
+				}
+			}
+		} finally {
+			activationTimings.stop();
 		}
-
-		activationTimings.stop();
 	}
 
 	// Note: This only activates chunks around the player, but does not deactivate any chunks that
 	// have previously been activated by the player. The periodic full activation update deactivates
 	// all chunks that no longer require activation.
-	private void activateNearbyChunks(Player player) {
+	private void activateNearbyChunks(Player player, long currentLifecycle, long generation) {
+		synchronized (stateLock) {
+			if (!enabled || lifecycle != currentLifecycle
+					|| activationGeneration != generation) return;
+		}
+
+		if (!player.isOnline()) return;
 		World world = player.getWorld();
+		String worldName = world.getName();
+		boolean folia = plugin.getFoliaLib().isFolia();
+		Location sharedLocation = EntityAI.sharedLocation.get();
 		Location location = Unsafe.assertNonNull(player.getLocation(sharedLocation));
 		// Note: On some Paper versions with their async chunk loading, the player's current chunk
 		// may sometimes not be loaded yet. We therefore avoid accessing (and thereby loading) that
@@ -470,46 +603,46 @@ public class EntityAI implements Listener {
 		// chunks only considers loaded chunks.
 		int chunkX = ChunkCoords.fromBlock(location.getBlockX());
 		int chunkZ = ChunkCoords.fromBlock(location.getBlockZ());
+		sharedLocation.setWorld(null); // Reset
 
-		this.activateNearbyChunks(
-				world,
-				chunkX,
-				chunkZ,
-				AI_ACTIVATION_CHUNK_RANGE,
-				ActivationType.AI
-		);
-		if (customGravityEnabled) {
-			assert Settings.gravityChunkRange >= 0;
+		synchronized (stateLock) {
+			// Ignore callbacks from previous activation scans or plugin lifecycles.
+			if (!enabled || lifecycle != currentLifecycle
+					|| activationGeneration != generation) return;
+
 			this.activateNearbyChunks(
-					world,
+					worldName,
 					chunkX,
 					chunkZ,
-					Settings.gravityChunkRange,
-					ActivationType.GRAVITY
+					AI_ACTIVATION_CHUNK_RANGE,
+					ActivationType.AI,
+					folia
 			);
+			if (customGravityEnabled) {
+				assert Settings.gravityChunkRange >= 0;
+				this.activateNearbyChunks(
+						worldName,
+						chunkX,
+						chunkZ,
+						Settings.gravityChunkRange,
+						ActivationType.GRAVITY,
+						folia
+				);
+			}
 		}
-		sharedLocation.setWorld(null); // Reset
 	}
 
 	private void activateNearbyChunksDelayed(Player player) {
-		if (!player.isOnline()) return; // Player is no longer online
-		Bukkit.getScheduler().runTask(plugin, new ActivateNearbyChunksDelayedTask(player));
-	}
-
-	private class ActivateNearbyChunksDelayedTask implements Runnable {
-
-		private final Player player;
-
-		ActivateNearbyChunksDelayedTask(Player player) {
-			assert player != null;
-			this.player = player;
+		long currentLifecycle;
+		long generation;
+		synchronized (stateLock) {
+			if (!enabled) return;
+			currentLifecycle = lifecycle;
+			generation = activationGeneration;
 		}
 
-		@Override
-		public void run() {
-			if (!player.isOnline()) return; // Player is no longer online
-			activateNearbyChunks(player);
-		}
+		SchedulerUtils.runTaskOrOmit(player,
+				() -> this.activateNearbyChunks(player, currentLifecycle, generation));
 	}
 
 	private enum ActivationType {
@@ -518,14 +651,15 @@ public class EntityAI implements Listener {
 	}
 
 	private void activateNearbyChunks(
-			World world,
+			String worldName,
 			int centerChunkX,
 			int centerChunkZ,
 			int chunkRadius,
-			ActivationType activationType
+			ActivationType activationType,
+			boolean folia
 	) {
-		assert world != null && chunkRadius >= 0 && activationType != null;
-		String worldName = world.getName();
+		assert Thread.holdsLock(stateLock) && chunkRadius >= 0;
+		MutableChunkCoords sharedChunkCoords = EntityAI.sharedChunkCoords.get();
 		int minChunkX = centerChunkX - chunkRadius;
 		int maxChunkX = centerChunkX + chunkRadius;
 		int minChunkZ = centerChunkZ - chunkRadius;
@@ -541,12 +675,18 @@ public class EntityAI implements Listener {
 					if (!chunkData.activeGravity) {
 						chunkData.activeGravity = true;
 						activeGravityChunksCount++;
+						if (folia) {
+							for (EntityData entityData : chunkData.entities) {
+								if (entityData.isAffectedByGravity()) activeGravityEntityCount++;
+							}
+						}
 					}
 					break;
 				case AI:
 					if (!chunkData.activeAI) {
 						chunkData.activeAI = true;
 						activeAIChunksCount++;
+						if (folia) activeAIEntityCount += chunkData.entities.size();
 					}
 					break;
 				default:
@@ -560,35 +700,35 @@ public class EntityAI implements Listener {
 	// ENTITY PROCESSING
 
 	private void processEntities() {
-		activeAIEntityCount = 0;
-		activeGravityEntityCount = 0;
+		boolean folia = plugin.getFoliaLib().isFolia();
+		List<EntityData> snapshot = new ArrayList<>();
+		synchronized (stateLock) {
+			if (!enabled) return;
+			if (!folia) {
+				activeAIEntityCount = 0;
+				activeGravityEntityCount = 0;
+			}
 
-		if (activeAIChunksCount == 0 && activeGravityChunksCount == 0) {
-			// There is no need to process any entities if there are no chunks with active AI or
-			// gravity:
-			return;
+			for (ChunkData chunkData : chunks.values()) {
+				if (chunkData.activeGravity || chunkData.activeAI) {
+					snapshot.addAll(chunkData.entities);
+				}
+			}
 		}
 
-		chunks.values().forEach(this::processEntities);
-	}
-
-	private void processEntities(ChunkData chunkData) {
-		assert chunkData != null;
-		if (!chunkData.activeGravity && !chunkData.activeAI) {
-			// There is no need to process the chunk's entities:
-			return;
-		}
-
-		chunkData.entities.forEach(this::processEntity);
+		snapshot.forEach(this::processEntity);
 	}
 
 	private void processEntity(EntityData entityData) {
 		assert entityData != null;
-		Entity entity = entityData.shopObject.getEntity();
+		Entity entity = entityData.entity;
 
-		// Unexpected: The shop object is supposed to unregister itself from the AI system when it
-		// despawns its entity.
-		if (entity == null) return;
+		if (plugin.getFoliaLib().isFolia()) {
+			SchedulerUtils.runTaskOrOmit(entity, () -> this.processEntityRegion(entityData, entity));
+			return;
+		}
+
+		if (entityData.shopObject.getEntity() != entity) return;
 
 		// Note: Checking entity.isValid() is relatively heavy (compared to other operations) due to
 		// a chunk lookup. The entity's entry is already immediately getting removed as reaction to
@@ -609,7 +749,10 @@ public class EntityAI implements Listener {
 		// Process gravity:
 		gravityTimings.resume();
 		if (chunkData.activeGravity && entityData.isAffectedByGravity()) {
-			activeGravityEntityCount++;
+			synchronized (stateLock) {
+				activeGravityEntityCount++;
+			}
+
 			this.processGravity(entityData);
 		}
 		gravityTimings.pause();
@@ -617,10 +760,58 @@ public class EntityAI implements Listener {
 		// Process AI:
 		aiTimings.resume();
 		if (chunkData.activeAI) {
-			activeAIEntityCount++;
+			synchronized (stateLock) {
+				activeAIEntityCount++;
+			}
+
 			this.processAI(entityData);
 		}
 		aiTimings.pause();
+	}
+
+	private boolean isRegistered(EntityData entityData) {
+		assert Thread.holdsLock(stateLock);
+		return enabled && shopObjects.get(entityData.shopObject) == entityData;
+	}
+
+	// Each region measures its own completed durations, without sharing timer start/pause state.
+	private void processEntityRegion(EntityData entityData, Entity entity) {
+		boolean gravity;
+		long currentLifecycle;
+		synchronized (stateLock) {
+			if (!this.isRegistered(entityData)) return;
+			currentLifecycle = lifecycle;
+			gravity = entityData.chunkData.activeGravity && entityData.isAffectedByGravity();
+		}
+
+		if (entityData.shopObject.getEntity() != entity || entity.isDead()) return;
+
+		if (gravity) {
+			long start = System.nanoTime();
+			try {
+				this.processGravity(entityData);
+			} finally {
+				long elapsed = System.nanoTime() - start;
+				synchronized (stateLock) {
+					if (enabled && lifecycle == currentLifecycle) gravityTimings.record(elapsed);
+				}
+			}
+		}
+
+		synchronized (stateLock) {
+			if (!this.isRegistered(entityData) || !entityData.chunkData.activeAI) return;
+		}
+
+		if (entityData.shopObject.getEntity() != entity || entity.isDead()) return;
+		long start = System.nanoTime();
+		try {
+			this.processAI(entityData);
+		} finally {
+			long elapsed = System.nanoTime() - start;
+			synchronized (stateLock) {
+				if (enabled && lifecycle == currentLifecycle) aiTimings.record(elapsed);
+			}
+		}
 	}
 
 	// GRAVITY
@@ -645,7 +836,8 @@ public class EntityAI implements Listener {
 			// performance-wise, even accessing the chunk / the block's type is already comparable
 			// to the raytrace itself, and that this optimization attempt even adds a small
 			// performance impact on top instead.
-			Entity entity = Unsafe.assertNonNull(entityData.shopObject.getEntity());
+			Entity entity = entityData.entity;
+			Location sharedLocation = EntityAI.sharedLocation.get();
 			Location entityLocation = Unsafe.assertNonNull(entity.getLocation(sharedLocation));
 
 			// The entity may be able to stand on certain types of fluids:
@@ -703,7 +895,7 @@ public class EntityAI implements Listener {
 	// Gets run every behavior update while falling:
 	private void tickFalling(EntityData entityData) {
 		assert entityData.falling && entityData.distanceToGround >= DISTANCE_TO_GROUND_THRESHOLD;
-		Entity entity = Unsafe.assertNonNull(entityData.shopObject.getEntity());
+		Entity entity = entityData.entity;
 
 		// Determine falling step size:
 		double fallingStepSize;
@@ -719,6 +911,7 @@ public class EntityAI implements Listener {
 		}
 
 		// Teleport the entity to its new location:
+		Location sharedLocation = EntityAI.sharedLocation.get();
 		Location newLocation = Unsafe.assertNonNull(entity.getLocation(sharedLocation));
 		newLocation.add(0.0D, -fallingStepSize, 0.0D);
 

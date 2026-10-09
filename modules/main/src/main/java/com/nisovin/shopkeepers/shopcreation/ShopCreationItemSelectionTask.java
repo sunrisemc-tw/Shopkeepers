@@ -1,17 +1,17 @@
 package com.nisovin.shopkeepers.shopcreation;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
-import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
-import org.bukkit.scheduler.BukkitTask;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import com.nisovin.shopkeepers.lang.Messages;
+import com.nisovin.shopkeepers.util.bukkit.SchedulerUtils;
 import com.nisovin.shopkeepers.util.bukkit.TextUtils;
+import com.tcoded.folialib.wrapper.task.WrappedTask;
 
 class ShopCreationItemSelectionTask implements Runnable {
 
@@ -25,7 +25,7 @@ class ShopCreationItemSelectionTask implements Runnable {
 	private static final long DELAY_TICKS = 5L; // 0.25 seconds
 
 	// By player UUID:
-	private static final Map<UUID, ShopCreationItemSelectionTask> activeTasks = new HashMap<>();
+	private static final Map<UUID, ShopCreationItemSelectionTask> activeTasks = new ConcurrentHashMap<>();
 
 	/**
 	 * Starts this task for the given player.
@@ -73,15 +73,18 @@ class ShopCreationItemSelectionTask implements Runnable {
 		activeTasks.clear();
 	}
 
-	private static void cleanup(Player player) {
-		activeTasks.remove(player.getUniqueId());
+	private void cleanup() {
+		// Only remove this task if it is still the active one for the player, so that a
+		// replacement task started in the meantime (possibly from another region thread on Folia)
+		// is not removed by this stale callback:
+		activeTasks.remove(player.getUniqueId(), this);
 	}
 
 	// -----
 
 	private final Plugin plugin;
 	private final Player player;
-	private @Nullable BukkitTask bukkitTask = null;
+	private @Nullable WrappedTask task = null;
 
 	// Use the static 'start' factory method.
 	private ShopCreationItemSelectionTask(Plugin plugin, Player player) {
@@ -93,21 +96,21 @@ class ShopCreationItemSelectionTask implements Runnable {
 	private void start() {
 		// Cancel previous task if already active:
 		this.cancel();
-		bukkitTask = Bukkit.getScheduler().runTaskLater(plugin, this, DELAY_TICKS);
+		task = SchedulerUtils.runTaskLaterOrOmit(player, this, DELAY_TICKS);
 	}
 
 	// Note: Performs no cleanup.
 	private void cancel() {
-		if (bukkitTask != null) {
-			bukkitTask.cancel();
-			bukkitTask = null;
+		if (task != null) {
+			task.cancel();
+			task = null;
 		}
 	}
 
 	@Override
 	public void run() {
 		// Cleanup:
-		cleanup(player);
+		this.cleanup();
 
 		if (!player.isOnline()) return; // No longer online
 

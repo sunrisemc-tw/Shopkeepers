@@ -1,0 +1,169 @@
+Note: /home/user/Data/Dev/Java/Shopkeepers/modules/test/src/folia/java/com/nisovin/shopkeepers/LifecycleCorrectionsTests.java uses or overrides a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+Note: /home/user/Data/Dev/Java/Shopkeepers/modules/test/src/folia/java/com/nisovin/shopkeepers/FoliaNativeSchedulerTests.java uses or overrides a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+JUnit version 4.13.1
+.Mockito is currently self-attaching to enable the inline-mock-maker. This will no longer work in future releases of the JDK. Please add Mockito as an agent to your build as described in Mockito's documentation: https://javadoc.io/doc/org.mockito/mockito-core/latest/org.mockito/org/mockito/Mockito.html#0.3
+WARNING: A Java agent has been loaded dynamically (/home/user/.gradle/caches/modules-2/files-2.1/net.bytebuddy/byte-buddy-agent/1.17.7/fbf3d6d649ed37fc9e9c59480a05be0a26e3c2da/byte-buddy-agent-1.17.7.jar)
+WARNING: If a serviceability tool is in use, please run with -XX:+EnableDynamicAgentLoading to hide this warning
+WARNING: If a serviceability tool is not in use, please run with -Djdk.instrument.traceUsage for more information
+WARNING: Dynamic loading of agents will be disallowed by default in a future release
+OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+..............................................................Oct 09, 2026 10:29:05 PM com.nisovin.shopkeepers.util.logging.Log info
+INFO: Loading the data of 2 shopkeepers ...
+Oct 09, 2026 10:29:05 PM com.nisovin.shopkeepers.util.logging.Log warning
+WARNING: Failed to load shopkeeper '1': Shopkeeper data could not be loaded!
+com.nisovin.shopkeepers.util.data.serialization.InvalidDataException: Injected load failure
+	at com.nisovin.shopkeepers.shopkeeper.registry.SKShopkeeperRegistry.loadShopkeeper(SKShopkeeperRegistry.java:285)
+	at com.nisovin.shopkeepers.storage.SKShopkeeperStorage.loadShopkeeper(SKShopkeeperStorage.java:911)
+	at com.nisovin.shopkeepers.storage.SKShopkeeperStorage.doReload(SKShopkeeperStorage.java:855)
+	at com.nisovin.shopkeepers.storage.SKShopkeeperStorage.reload(SKShopkeeperStorage.java:649)
+	at com.nisovin.shopkeepers.storage.StorageCorrectionsTests.startupPreservesUnloadedAndBrokenRecordsThroughAnotherSave(StorageCorrectionsTests.java:131)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.junit.runners.model.FrameworkMethod$1.runReflectiveCall(FrameworkMethod.java:59)
+	at org.junit.internal.runners.model.ReflectiveCallable.run(ReflectiveCallable.java:12)
+	at org.junit.runners.model.FrameworkMethod.invokeExplosively(FrameworkMethod.java:56)
+	at org.junit.internal.runners.statements.InvokeMethod.evaluate(InvokeMethod.java:17)
+	at org.junit.internal.runners.statements.RunBefores.evaluate(RunBefores.java:26)
+	at org.junit.internal.runners.statements.RunAfters.evaluate(RunAfters.java:27)
+	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+	at org.junit.runners.BlockJUnit4ClassRunner$1.evaluate(BlockJUnit4ClassRunner.java:100)
+	at org.junit.runners.ParentRunner.runLeaf(ParentRunner.java:366)
+	at org.junit.runners.BlockJUnit4ClassRunner.runChild(BlockJUnit4ClassRunner.java:103)
+	at org.junit.runners.BlockJUnit4ClassRunner.runChild(BlockJUnit4ClassRunner.java:63)
+	at org.junit.runners.ParentRunner$4.run(ParentRunner.java:331)
+	at org.junit.runners.ParentRunner$1.schedule(ParentRunner.java:79)
+	at org.junit.runners.ParentRunner.runChildren(ParentRunner.java:329)
+	at org.junit.runners.ParentRunner.access$100(ParentRunner.java:66)
+	at org.junit.runners.ParentRunner$2.evaluate(ParentRunner.java:293)
+	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+	at org.junit.runners.ParentRunner.run(ParentRunner.java:413)
+	at org.junit.runners.Suite.runChild(Suite.java:128)
+	at org.junit.runners.Suite.runChild(Suite.java:27)
+	at org.junit.runners.ParentRunner$4.run(ParentRunner.java:331)
+	at org.junit.runners.ParentRunner$1.schedule(ParentRunner.java:79)
+	at org.junit.runners.ParentRunner.runChildren(ParentRunner.java:329)
+	at org.junit.runners.ParentRunner.access$100(ParentRunner.java:66)
+	at org.junit.runners.ParentRunner$2.evaluate(ParentRunner.java:293)
+	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+	at org.junit.runners.ParentRunner.run(ParentRunner.java:413)
+	at org.junit.runner.JUnitCore.run(JUnitCore.java:137)
+	at org.junit.runner.JUnitCore.run(JUnitCore.java:115)
+	at org.junit.runner.JUnitCore.runMain(JUnitCore.java:77)
+	at org.junit.runner.JUnitCore.main(JUnitCore.java:36)
+
+Oct 09, 2026 10:29:05 PM com.nisovin.shopkeepers.util.logging.Log warning
+WARNING: Failed to load shopkeeper 'broken': Invalid id: broken
+.Oct 09, 2026 10:29:05 PM com.nisovin.shopkeepers.util.logging.Log warning
+WARNING: Synchronous Folia save retained last-known data for 1 pending owner snapshots.
+......Oct 09, 2026 10:29:05 PM com.nisovin.shopkeepers.util.logging.Log warning
+WARNING: Folia storage still has pending changes: 1 snapshots/records, 0 deletions. Last-known data was retained.
+..........Oct 09, 2026 10:29:05 PM com.nisovin.shopkeepers.util.logging.Log warning
+WARNING: Synchronous Folia save retained last-known data for 1 pending owner snapshots.
+Oct 09, 2026 10:29:05 PM com.nisovin.shopkeepers.util.logging.Log warning
+WARNING: Folia storage still has pending changes: 1 snapshots/records, 0 deletions. Last-known data was retained.
+.Oct 09, 2026 10:29:05 PM com.nisovin.shopkeepers.util.logging.Log warning
+WARNING: nullSnapshot failed! Retaining previous data.
+java.lang.IllegalStateException: Injected snapshot failure
+	at com.nisovin.shopkeepers.shopkeeper.AbstractShopkeeper.save(AbstractShopkeeper.java:518)
+	at com.nisovin.shopkeepers.storage.SKShopkeeperStorage.captureFoliaSnapshot(SKShopkeeperStorage.java:327)
+	at com.nisovin.shopkeepers.storage.SKShopkeeperStorage.markDirty(SKShopkeeperStorage.java:1068)
+	at com.nisovin.shopkeepers.storage.StorageCorrectionsTests.failedSnapshotRetainsPreviouslyCapturedRecordAndDirtyVersion(StorageCorrectionsTests.java:180)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.junit.runners.model.FrameworkMethod$1.runReflectiveCall(FrameworkMethod.java:59)
+	at org.junit.internal.runners.model.ReflectiveCallable.run(ReflectiveCallable.java:12)
+	at org.junit.runners.model.FrameworkMethod.invokeExplosively(FrameworkMethod.java:56)
+	at org.junit.internal.runners.statements.InvokeMethod.evaluate(InvokeMethod.java:17)
+	at org.junit.internal.runners.statements.RunBefores.evaluate(RunBefores.java:26)
+	at org.junit.internal.runners.statements.RunAfters.evaluate(RunAfters.java:27)
+	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+	at org.junit.runners.BlockJUnit4ClassRunner$1.evaluate(BlockJUnit4ClassRunner.java:100)
+	at org.junit.runners.ParentRunner.runLeaf(ParentRunner.java:366)
+	at org.junit.runners.BlockJUnit4ClassRunner.runChild(BlockJUnit4ClassRunner.java:103)
+	at org.junit.runners.BlockJUnit4ClassRunner.runChild(BlockJUnit4ClassRunner.java:63)
+	at org.junit.runners.ParentRunner$4.run(ParentRunner.java:331)
+	at org.junit.runners.ParentRunner$1.schedule(ParentRunner.java:79)
+	at org.junit.runners.ParentRunner.runChildren(ParentRunner.java:329)
+	at org.junit.runners.ParentRunner.access$100(ParentRunner.java:66)
+	at org.junit.runners.ParentRunner$2.evaluate(ParentRunner.java:293)
+	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+	at org.junit.runners.ParentRunner.run(ParentRunner.java:413)
+	at org.junit.runners.Suite.runChild(Suite.java:128)
+	at org.junit.runners.Suite.runChild(Suite.java:27)
+	at org.junit.runners.ParentRunner$4.run(ParentRunner.java:331)
+	at org.junit.runners.ParentRunner$1.schedule(ParentRunner.java:79)
+	at org.junit.runners.ParentRunner.runChildren(ParentRunner.java:329)
+	at org.junit.runners.ParentRunner.access$100(ParentRunner.java:66)
+	at org.junit.runners.ParentRunner$2.evaluate(ParentRunner.java:293)
+	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+	at org.junit.runners.ParentRunner.run(ParentRunner.java:413)
+	at org.junit.runner.JUnitCore.run(JUnitCore.java:137)
+	at org.junit.runner.JUnitCore.run(JUnitCore.java:115)
+	at org.junit.runner.JUnitCore.runMain(JUnitCore.java:77)
+	at org.junit.runner.JUnitCore.main(JUnitCore.java:36)
+
+Oct 09, 2026 10:29:05 PM com.nisovin.shopkeepers.util.logging.Log warning
+WARNING: nullSnapshot failed! Retaining previous data.
+java.lang.IllegalStateException: Injected snapshot failure
+	at com.nisovin.shopkeepers.shopkeeper.AbstractShopkeeper.save(AbstractShopkeeper.java:518)
+	at com.nisovin.shopkeepers.storage.SKShopkeeperStorage.captureFoliaSnapshot(SKShopkeeperStorage.java:327)
+	at com.nisovin.shopkeepers.storage.SKShopkeeperStorage.doSave(SKShopkeeperStorage.java:1216)
+	at com.nisovin.shopkeepers.storage.SKShopkeeperStorage.saveImmediate(SKShopkeeperStorage.java:1184)
+	at com.nisovin.shopkeepers.storage.StorageCorrectionsTests.failedSnapshotRetainsPreviouslyCapturedRecordAndDirtyVersion(StorageCorrectionsTests.java:181)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.junit.runners.model.FrameworkMethod$1.runReflectiveCall(FrameworkMethod.java:59)
+	at org.junit.internal.runners.model.ReflectiveCallable.run(ReflectiveCallable.java:12)
+	at org.junit.runners.model.FrameworkMethod.invokeExplosively(FrameworkMethod.java:56)
+	at org.junit.internal.runners.statements.InvokeMethod.evaluate(InvokeMethod.java:17)
+	at org.junit.internal.runners.statements.RunBefores.evaluate(RunBefores.java:26)
+	at org.junit.internal.runners.statements.RunAfters.evaluate(RunAfters.java:27)
+	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+	at org.junit.runners.BlockJUnit4ClassRunner$1.evaluate(BlockJUnit4ClassRunner.java:100)
+	at org.junit.runners.ParentRunner.runLeaf(ParentRunner.java:366)
+	at org.junit.runners.BlockJUnit4ClassRunner.runChild(BlockJUnit4ClassRunner.java:103)
+	at org.junit.runners.BlockJUnit4ClassRunner.runChild(BlockJUnit4ClassRunner.java:63)
+	at org.junit.runners.ParentRunner$4.run(ParentRunner.java:331)
+	at org.junit.runners.ParentRunner$1.schedule(ParentRunner.java:79)
+	at org.junit.runners.ParentRunner.runChildren(ParentRunner.java:329)
+	at org.junit.runners.ParentRunner.access$100(ParentRunner.java:66)
+	at org.junit.runners.ParentRunner$2.evaluate(ParentRunner.java:293)
+	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+	at org.junit.runners.ParentRunner.run(ParentRunner.java:413)
+	at org.junit.runners.Suite.runChild(Suite.java:128)
+	at org.junit.runners.Suite.runChild(Suite.java:27)
+	at org.junit.runners.ParentRunner$4.run(ParentRunner.java:331)
+	at org.junit.runners.ParentRunner$1.schedule(ParentRunner.java:79)
+	at org.junit.runners.ParentRunner.runChildren(ParentRunner.java:329)
+	at org.junit.runners.ParentRunner.access$100(ParentRunner.java:66)
+	at org.junit.runners.ParentRunner$2.evaluate(ParentRunner.java:293)
+	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+	at org.junit.runners.ParentRunner.run(ParentRunner.java:413)
+	at org.junit.runner.JUnitCore.run(JUnitCore.java:137)
+	at org.junit.runner.JUnitCore.run(JUnitCore.java:115)
+	at org.junit.runner.JUnitCore.runMain(JUnitCore.java:77)
+	at org.junit.runner.JUnitCore.main(JUnitCore.java:36)
+
+Oct 09, 2026 10:29:05 PM com.nisovin.shopkeepers.util.logging.Log warning
+WARNING: Synchronous Folia save retained last-known data for 1 pending owner snapshots.
+Oct 09, 2026 10:29:05 PM com.nisovin.shopkeepers.util.logging.Log warning
+WARNING: Folia storage still has pending changes: 1 snapshots/records, 0 deletions. Last-known data was retained.
+..........
+Time: 5.062
+
+OK (91 tests)
+
+JUnit version 4.13.1
+.Mockito is currently self-attaching to enable the inline-mock-maker. This will no longer work in future releases of the JDK. Please add Mockito as an agent to your build as described in Mockito's documentation: https://javadoc.io/doc/org.mockito/mockito-core/latest/org.mockito/org/mockito/Mockito.html#0.3
+WARNING: A Java agent has been loaded dynamically (/home/user/.gradle/caches/modules-2/files-2.1/net.bytebuddy/byte-buddy-agent/1.17.7/fbf3d6d649ed37fc9e9c59480a05be0a26e3c2da/byte-buddy-agent-1.17.7.jar)
+WARNING: If a serviceability tool is in use, please run with -XX:+EnableDynamicAgentLoading to hide this warning
+WARNING: If a serviceability tool is not in use, please run with -Djdk.instrument.traceUsage for more information
+WARNING: Dynamic loading of agents will be disallowed by default in a future release
+OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+..
+Time: 1.49
+
+OK (3 tests)
+

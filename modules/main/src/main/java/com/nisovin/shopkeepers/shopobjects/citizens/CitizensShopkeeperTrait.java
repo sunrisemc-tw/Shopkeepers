@@ -1,6 +1,5 @@
 package com.nisovin.shopkeepers.shopobjects.citizens;
 
-import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Location;
 import org.bukkit.entity.Entity;
@@ -17,6 +16,7 @@ import com.nisovin.shopkeepers.api.shopkeeper.ShopkeeperRegistry;
 import com.nisovin.shopkeepers.api.shopkeeper.admin.AdminShopCreationData;
 import com.nisovin.shopkeepers.api.shopobjects.DefaultShopObjectTypes;
 import com.nisovin.shopkeepers.shopkeeper.AbstractShopkeeper;
+import com.nisovin.shopkeepers.util.bukkit.SchedulerUtils;
 import com.nisovin.shopkeepers.util.bukkit.TextUtils;
 import com.nisovin.shopkeepers.util.logging.Log;
 
@@ -134,7 +134,7 @@ public class CitizensShopkeeperTrait extends Trait {
 
 		// Giving citizens some time to properly initialize the trait and NPC:
 		// Also: Shopkeeper creation by a player is handled after trait attachment.
-		Bukkit.getScheduler().runTaskLater(SKShopkeepersPlugin.getInstance(), () -> {
+		SchedulerUtils.runTaskLaterGloballyOrOmit(() -> {
 			// Create a new shopkeeper if there isn't one already for this NPC (without creator):
 			this.createShopkeeperIfMissing(null);
 		}, 5L);
@@ -225,8 +225,7 @@ public class CitizensShopkeeperTrait extends Trait {
 
 			// Note: We don't trigger a save of the NPC data when the trait is manually added, so we
 			// also don't trigger a save when we remove the trait again here.
-			Bukkit.getScheduler().runTask(
-					plugin,
+			SchedulerUtils.runTaskGloballyOrOmit(
 					() -> npc.removeTrait(CitizensShopkeeperTrait.class)
 			);
 		}

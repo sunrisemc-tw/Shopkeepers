@@ -16,10 +16,6 @@ import com.nisovin.shopkeepers.util.java.Validate;
 
 public final class WorldUtils {
 
-	// Temporary objects getting re-used during ray tracing:
-	private static final Location TEMP_START_LOCATION = new Location(null, 0, 0, 0);
-	private static final Vector TEMP_START_POSITION = new Vector();
-	private static final Vector DOWN_DIRECTION = new Vector(0.0D, -1.0D, 0.0D);
 	private static final double RAY_TRACE_OFFSET = 0.01D;
 
 	/**
@@ -53,15 +49,9 @@ public final class WorldUtils {
 		Validate.notNull(world, "startLocation's world is null");
 		assert world != null;
 
-		// Setup re-used offset start location:
-		TEMP_START_LOCATION.setWorld(world);
-		TEMP_START_LOCATION.setX(startLocation.getX());
-		TEMP_START_LOCATION.setY(startLocation.getY() + RAY_TRACE_OFFSET);
-		TEMP_START_LOCATION.setZ(startLocation.getZ());
-
-		TEMP_START_POSITION.setX(TEMP_START_LOCATION.getX());
-		TEMP_START_POSITION.setY(TEMP_START_LOCATION.getY());
-		TEMP_START_POSITION.setZ(TEMP_START_LOCATION.getZ());
+		Location rayStart = startLocation.clone().add(0.0D, RAY_TRACE_OFFSET, 0.0D);
+		Vector rayPosition = rayStart.toVector();
+		Vector downDirection = new Vector(0.0D, -1.0D, 0.0D);
 
 		double offsetMaxDistance = maxDistance + RAY_TRACE_OFFSET;
 
@@ -70,8 +60,8 @@ public final class WorldUtils {
 			// Considers block collision boxes, ignoring passable blocks and fluids (null if there
 			// is no hit):
 			rayTraceResult = world.rayTraceBlocks(
-					TEMP_START_LOCATION,
-					DOWN_DIRECTION,
+					rayStart,
+					downDirection,
 					offsetMaxDistance,
 					FluidCollisionMode.NEVER,
 					true
@@ -82,8 +72,8 @@ public final class WorldUtils {
 			int offsetMaxDistanceBlocks = NumberConversions.ceil(offsetMaxDistance);
 			BlockIterator blockIterator = new BlockIterator(
 					world,
-					TEMP_START_POSITION,
-					DOWN_DIRECTION,
+					rayPosition,
+					downDirection,
 					0.0D,
 					offsetMaxDistanceBlocks
 			);
@@ -91,8 +81,8 @@ public final class WorldUtils {
 				Block block = blockIterator.next();
 				if (!block.isPassable() || collidableFluids.contains(block.getType())) {
 					rayTraceResult = block.rayTrace(
-							TEMP_START_LOCATION,
-							DOWN_DIRECTION,
+							rayStart,
+							downDirection,
 							offsetMaxDistance,
 							FluidCollisionMode.ALWAYS
 					);
@@ -105,14 +95,14 @@ public final class WorldUtils {
 			}
 			// rayTraceResult can remain null if there are no block collisions in range.
 		}
-		TEMP_START_LOCATION.setWorld(null); // Cleanup temporarily used start location
+		rayStart.setWorld(null); // Cleanup temporarily used start location
 
 		double distanceToGround;
 		if (rayTraceResult == null) {
 			// No collision with the range:
 			distanceToGround = maxDistance;
 		} else {
-			distanceToGround = TEMP_START_POSITION.distance(rayTraceResult.getHitPosition()) - RAY_TRACE_OFFSET;
+			distanceToGround = rayPosition.distance(rayTraceResult.getHitPosition()) - RAY_TRACE_OFFSET;
 			// Might be negative if the hit is between the start location and the offset start
 			// location. We ignore it then.
 			if (distanceToGround < 0.0D) distanceToGround = 0.0D;

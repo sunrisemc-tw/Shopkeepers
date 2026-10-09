@@ -16,7 +16,7 @@ public final class ShopkeeperSpawnState extends Component {
 		DESPAWNING
 	}
 
-	private State state = State.DESPAWNED;
+	private volatile State state = State.DESPAWNED;
 
 	public ShopkeeperSpawnState() {
 	}

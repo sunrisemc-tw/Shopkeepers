@@ -8,7 +8,7 @@ import com.nisovin.shopkeepers.util.java.Validate;
 final class WorldData {
 
 	private final String worldName;
-	private @Nullable RespawnShopkeepersAfterWorldSaveTask worldSaveRespawnTask = null;
+	private volatile @Nullable RespawnShopkeepersAfterWorldSaveTask worldSaveRespawnTask = null;
 
 	WorldData(String worldName) {
 		Validate.notNull(worldName, "worldName is null");
@@ -29,10 +29,22 @@ final class WorldData {
 		this.worldSaveRespawnTask = worldSaveRespawnTask;
 	}
 
+	synchronized boolean replaceWorldSaveRespawnTask(
+			@Nullable RespawnShopkeepersAfterWorldSaveTask expected,
+			@Nullable RespawnShopkeepersAfterWorldSaveTask replacement
+	) {
+		if (worldSaveRespawnTask != expected) return false;
+		worldSaveRespawnTask = replacement;
+		return true;
+	}
+
+	boolean isWorldSaveRespawnTask(RespawnShopkeepersAfterWorldSaveTask task) {
+		return worldSaveRespawnTask == task;
+	}
+
 	void cancelWorldSaveRespawnTask() {
-		if (worldSaveRespawnTask != null) {
-			worldSaveRespawnTask.cancel();
-		}
+		@Nullable RespawnShopkeepersAfterWorldSaveTask task = worldSaveRespawnTask;
+		if (task != null) task.cancel();
 	}
 
 	void cleanUp() {

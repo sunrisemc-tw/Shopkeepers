@@ -1,8 +1,11 @@
 package com.nisovin.shopkeepers.shopkeeper.registry;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -56,121 +59,180 @@ class ShopkeeperChunkMap {
 	private final Set<String> shopkeeperWorldsView = Collections.unmodifiableSet(shopkeepersByWorld.keySet());
 
 	private final ChangeListener changeListener; // Not null
+	private final Object lock;
+	private final boolean snapshots;
 
 	ShopkeeperChunkMap() {
 		this(new ChangeListener());
 	}
 
 	ShopkeeperChunkMap(ChangeListener changeListener) {
+		this(new Object(), false, changeListener);
+	}
+
+	ShopkeeperChunkMap(Object lock, boolean snapshots, ChangeListener changeListener) {
 		Validate.notNull(changeListener, "changeListener is null");
+		this.lock = lock;
+		this.snapshots = snapshots;
 		this.changeListener = changeListener;
 	}
 
 	// Returns null if there are no shopkeepers in the specified world.
 	@Nullable
 	WorldShopkeepers getWorldShopkeepers(String worldName) {
-		return shopkeepersByWorld.get(worldName);
+		synchronized (lock) {
+			return shopkeepersByWorld.get(worldName);
+		}
 	}
 
 	// Returns null if there are no shopkeepers in the specified chunk:
 	@Nullable
 	ChunkShopkeepers getChunkShopkeepers(@Nullable ChunkCoords chunkCoords) {
-		if (chunkCoords == null) return null;
-		String worldName = chunkCoords.getWorldName();
-		WorldShopkeepers worldShopkeepers = this.getWorldShopkeepers(worldName);
-		if (worldShopkeepers == null) return null; // There are no shopkeepers in this world
-		return worldShopkeepers.getChunkShopkeepers(chunkCoords);
+		synchronized (lock) {
+			if (chunkCoords == null) return null;
+			String worldName = chunkCoords.getWorldName();
+			WorldShopkeepers worldShopkeepers = this.getWorldShopkeepers(worldName);
+			if (worldShopkeepers == null) return null; // There are no shopkeepers in this world
+			return worldShopkeepers.getChunkShopkeepers(chunkCoords);
+		}
 	}
 
 	// Only called for non-virtual shopkeepers.
 	ChunkShopkeepers addShopkeeper(AbstractShopkeeper shopkeeper) {
-		assert shopkeeper != null && !shopkeeper.isVirtual();
-		assert shopkeeper.getLastChunkCoords() == null;
-		String worldName = Unsafe.assertNonNull(shopkeeper.getWorldName());
-		ChunkCoords shopkeeperChunk = Unsafe.assertNonNull(shopkeeper.getChunkCoords());
-		assert worldName.equals(shopkeeperChunk.getWorldName());
-		WorldShopkeepers worldShopkeepers = shopkeepersByWorld.computeIfAbsent(
-				worldName,
-				WorldShopkeepers::new
-		);
-		assert worldShopkeepers != null;
-		ChunkShopkeepers chunkShopkeepers = worldShopkeepers.addShopkeeper(shopkeeper);
+		List<Runnable> notifications = new ArrayList<>();
+		ChunkShopkeepers result = this.addShopkeeper(shopkeeper, notifications);
+		notifications.forEach(Runnable::run);
+		return result;
+	}
 
-		// Inform change listener:
-		if (worldShopkeepers.getShopkeeperCount() == 1) {
-			changeListener.onWorldAdded(worldShopkeepers);
+	ChunkShopkeepers addShopkeeper(AbstractShopkeeper shopkeeper, List<Runnable> notifications) {
+		synchronized (lock) {
+			assert shopkeeper != null && !shopkeeper.isVirtual();
+			assert shopkeeper.getLastChunkCoords() == null;
+			String worldName = Unsafe.assertNonNull(shopkeeper.getWorldName());
+			ChunkCoords shopkeeperChunk = Unsafe.assertNonNull(shopkeeper.getChunkCoords());
+			assert worldName.equals(shopkeeperChunk.getWorldName());
+			WorldShopkeepers worldShopkeepers = shopkeepersByWorld.computeIfAbsent(
+					worldName,
+					name -> new WorldShopkeepers(name, lock, snapshots)
+			);
+			assert worldShopkeepers != null;
+			ChunkShopkeepers chunkShopkeepers = worldShopkeepers.addShopkeeper(shopkeeper);
+
+			// Inform change listener:
+			if (worldShopkeepers.getShopkeeperCount() == 1) {
+				notifications.add(() -> changeListener.onWorldAdded(worldShopkeepers));
+			}
+			if (chunkShopkeepers.getShopkeepers().size() == 1) {
+				notifications.add(() -> {
+					if (this.getChunkShopkeepers(shopkeeperChunk) == chunkShopkeepers) {
+						changeListener.onChunkAdded(chunkShopkeepers);
+					}
+				});
+			}
+			notifications.add(() -> changeListener.onShopkeeperAdded(shopkeeper, chunkShopkeepers));
+			return chunkShopkeepers;
 		}
-		if (chunkShopkeepers.getShopkeepers().size() == 1) {
-			changeListener.onChunkAdded(chunkShopkeepers);
-		}
-		changeListener.onShopkeeperAdded(shopkeeper, chunkShopkeepers);
-		return chunkShopkeepers;
 	}
 
 	// Only called for non-virtual shopkeepers.
 	@Nullable
 	ChunkShopkeepers removeShopkeeper(AbstractShopkeeper shopkeeper) {
-		return this.removeShopkeeper(shopkeeper, false);
+		List<Runnable> notifications = new ArrayList<>();
+		ChunkShopkeepers result = this.removeShopkeeper(shopkeeper, false, notifications);
+		notifications.forEach(Runnable::run);
+		return result;
 	}
 
-	private @Nullable ChunkShopkeepers removeShopkeeper(
+	@Nullable ChunkShopkeepers removeShopkeeper(
 			AbstractShopkeeper shopkeeper,
-			boolean skipWorldCleanup
+			boolean skipWorldCleanup,
+			List<Runnable> notifications
 	) {
-		assert shopkeeper != null && !shopkeeper.isVirtual();
-		ChunkCoords lastChunkCoords = Unsafe.assertNonNull(shopkeeper.getLastChunkCoords());
-		String worldName = lastChunkCoords.getWorldName();
-		WorldShopkeepers worldShopkeepers = shopkeepersByWorld.get(worldName);
-		if (worldShopkeepers == null) return null; // Could not find the shopkeeper
+		synchronized (lock) {
+			assert shopkeeper != null && !shopkeeper.isVirtual();
+			ChunkCoords lastChunkCoords = Unsafe.assertNonNull(shopkeeper.getLastChunkCoords());
+			String worldName = lastChunkCoords.getWorldName();
+			WorldShopkeepers worldShopkeepers = shopkeepersByWorld.get(worldName);
+			if (worldShopkeepers == null) return null; // Could not find the shopkeeper
 
-		ChunkShopkeepers chunkShopkeepers = worldShopkeepers.removeShopkeeper(shopkeeper);
-		boolean worldRemoved = false;
-		if (!skipWorldCleanup && worldShopkeepers.getShopkeeperCount() == 0) {
-			worldRemoved = true;
-			shopkeepersByWorld.remove(worldName);
-		}
+			ChunkShopkeepers chunkShopkeepers = worldShopkeepers.removeShopkeeper(shopkeeper);
+			boolean worldRemoved = false;
+			if (!skipWorldCleanup && worldShopkeepers.getShopkeeperCount() == 0) {
+				worldRemoved = true;
+				shopkeepersByWorld.remove(worldName);
+			}
 
-		// Inform change listener:
-		changeListener.onShopkeeperRemoved(shopkeeper, chunkShopkeepers);
-		if (chunkShopkeepers.getShopkeepers().isEmpty()) {
-			changeListener.onChunkRemoved(chunkShopkeepers);
+			// Inform change listener:
+			notifications.add(() -> changeListener.onShopkeeperRemoved(shopkeeper, chunkShopkeepers));
+			if (chunkShopkeepers.getShopkeepers().isEmpty()) {
+				notifications.add(() -> {
+					if (this.getChunkShopkeepers(lastChunkCoords) == null) {
+						changeListener.onChunkRemoved(chunkShopkeepers);
+					}
+				});
+			}
+			if (worldRemoved) {
+				notifications.add(() -> {
+					if (this.getWorldShopkeepers(worldName) == null) {
+						changeListener.onWorldRemoved(worldShopkeepers);
+					}
+				});
+			}
+			return chunkShopkeepers;
 		}
-		if (worldRemoved) {
-			changeListener.onWorldRemoved(worldShopkeepers);
-		}
-		return chunkShopkeepers;
 	}
 
 	// Updates the shopkeeper's location inside the chunk map, moving it from its previous chunk to
 	// its current chunk.
 	// Returns true if the shopkeeper was moved to a different chunk.
 	boolean moveShopkeeper(AbstractShopkeeper shopkeeper) {
-		assert shopkeeper != null;
-		ChunkCoords oldChunk = Unsafe.assertNonNull(shopkeeper.getLastChunkCoords());
-		ChunkCoords newChunk = Unsafe.assertNonNull(shopkeeper.getChunkCoords());
-		if (newChunk.equals(oldChunk)) {
-			// The shopkeeper's chunk did not change.
-			return false;
+		List<Runnable> notifications = new ArrayList<>();
+		synchronized (lock) {
+			assert shopkeeper != null;
+			ChunkCoords oldChunk = Unsafe.assertNonNull(shopkeeper.getLastChunkCoords());
+			ChunkCoords newChunk = Unsafe.assertNonNull(shopkeeper.getChunkCoords());
+			if (newChunk.equals(oldChunk)) {
+				// The shopkeeper's chunk did not change.
+				return false;
+			}
+
+			// If the shopkeeper is moved from one chunk to another within the same world, we skip any
+			// world data cleanup.
+			boolean skipWorldCleanup = oldChunk.getWorldName().equals(newChunk.getWorldName());
+			this.removeShopkeeper(shopkeeper, skipWorldCleanup, notifications);
+			this.addShopkeeper(shopkeeper, notifications);
 		}
 
-		// If the shopkeeper is moved from one chunk to another within the same world, we skip any
-		// world data cleanup.
-		boolean skipWorldCleanup = oldChunk.getWorldName().equals(newChunk.getWorldName());
-		this.removeShopkeeper(shopkeeper, skipWorldCleanup);
-		this.addShopkeeper(shopkeeper);
+		notifications.forEach(Runnable::run);
 		return true;
 	}
 
 	void ensureEmpty() {
-		if (!shopkeepersByWorld.isEmpty()) {
-			Log.warning("Some shopkeepers were not properly removed from the chunk map!");
+		synchronized (lock) {
+			if (!shopkeepersByWorld.isEmpty()) {
+				Log.warning("Some shopkeepers were not properly removed from the chunk map!");
+				shopkeepersByWorld.clear();
+			}
+		}
+	}
+
+	void discardOnShutdown() {
+		synchronized (lock) {
 			shopkeepersByWorld.clear();
 		}
 	}
 
 	// QUERIES
 
+	boolean usesSnapshots() {
+		return snapshots;
+	}
+
 	public Collection<? extends String> getWorldsWithShopkeepers() {
-		return shopkeeperWorldsView;
+		synchronized (lock) {
+			return snapshots ? Collections.unmodifiableSet(
+					new LinkedHashSet<>(shopkeepersByWorld.keySet())) : shopkeeperWorldsView;
+		}
 	}
 }

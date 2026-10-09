@@ -16,7 +16,6 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryView;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import com.nisovin.shopkeepers.api.ShopkeepersPlugin;
 import com.nisovin.shopkeepers.api.shopkeeper.Shopkeeper;
 import com.nisovin.shopkeepers.api.ui.UIRegistry;
 import com.nisovin.shopkeepers.api.ui.UISession;
@@ -51,8 +50,8 @@ public abstract class View implements UISession {
 	private final Player player;
 	private final UIState initialUIState;
 
-	private boolean valid = true;
-	private boolean uiActive = true;
+	private volatile boolean valid = true;
+	private volatile boolean uiActive = true;
 
 	private @Nullable InventoryView inventoryView;
 
@@ -207,7 +206,7 @@ public abstract class View implements UISession {
 		this.deactivateUI();
 
 		// This fails during plugin disable. However, all UIs will be closed anyway.
-		SchedulerUtils.runTaskOrOmit(ShopkeepersPlugin.getInstance(), () -> {
+		SchedulerUtils.runTaskOrOmit(player, () -> {
 			if (!this.isValid()) return;
 
 			this.close();
@@ -234,7 +233,7 @@ public abstract class View implements UISession {
 		this.deactivateUI();
 
 		// This fails during plugin disable. However, all UIs will be closed anyway.
-		SchedulerUtils.runTaskOrOmit(ShopkeepersPlugin.getInstance(), () -> {
+		SchedulerUtils.runTaskOrOmit(player, () -> {
 			if (!this.isValid()) return;
 			this.abort();
 			if (task != null) {
@@ -470,7 +469,7 @@ public abstract class View implements UISession {
 	public final void updateAreaInAllViews(String area) {
 		UISessionManager.getInstance()
 				.getUISessionsForContext(this.getContext().getObject(), this.getUIType())
-				.forEach(view -> view.updateArea(area));
+				.forEach(view -> ((View) view).runOnViewer(() -> view.updateArea(area)));
 	}
 
 	/**
@@ -488,7 +487,19 @@ public abstract class View implements UISession {
 	public final void updateAllViews() {
 		UISessionManager.getInstance()
 				.getUISessionsForContext(this.getContext().getObject(), this.getUIType())
-				.forEach(view -> view.updateInventory());
+				.forEach(view -> ((View) view).runOnViewer(view::updateInventory));
+	}
+
+	private void runOnViewer(Runnable action) {
+		var plugin = com.nisovin.shopkeepers.SKShopkeepersPlugin.getInstance();
+		if (!plugin.getFoliaLib().isFolia()
+				|| plugin.getFoliaLib().getScheduler().isOwnedByCurrentRegion(player)) {
+			if (this.isValid()) action.run();
+		} else {
+			SchedulerUtils.runTaskOrOmit(player, () -> {
+				if (this.isValid()) action.run();
+			});
+		}
 	}
 
 	// UI STATE

@@ -3,6 +3,7 @@ package com.nisovin.shopkeepers.shopkeeper.registry;
 import java.util.AbstractSet;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.Set;
 
 import com.nisovin.shopkeepers.api.internal.util.Unsafe;
@@ -61,6 +62,13 @@ public class ActiveChunkQueries {
 	// QUERIES
 
 	public Set<? extends AbstractShopkeeper> getShopkeepersInActiveChunks() {
+		if (shopkeeperChunkMap.usesSnapshots()) {
+			Set<AbstractShopkeeper> result = new LinkedHashSet<>();
+			shopkeeperChunkMap.getWorldsWithShopkeepers().forEach(world ->
+					result.addAll(this.getShopkeepersInActiveChunks(world)));
+			return Collections.unmodifiableSet(result);
+		}
+
 		return shopkeepersInActiveChunksView;
 	}
 
@@ -69,6 +77,12 @@ public class ActiveChunkQueries {
 	public Set<? extends ChunkCoords> getActiveChunks(String worldName) {
 		WorldShopkeepers worldShopkeepers = shopkeeperChunkMap.getWorldShopkeepers(worldName);
 		if (worldShopkeepers == null) return Collections.emptySet();
+		if (shopkeeperChunkMap.usesSnapshots()) {
+			Set<ChunkCoords> result = new LinkedHashSet<>();
+			worldShopkeepers.getShopkeepersByChunk().keySet().stream()
+					.filter(this::isChunkActive).forEach(result::add);
+			return Collections.unmodifiableSet(result);
+		}
 
 		// Note: Already unmodifiable.
 		Set<? extends ChunkCoords> activeChunksView = new AbstractSet<ChunkCoords>() {
@@ -93,6 +107,13 @@ public class ActiveChunkQueries {
 	public Set<? extends AbstractShopkeeper> getShopkeepersInActiveChunks(String worldName) {
 		WorldShopkeepers worldShopkeepers = shopkeeperChunkMap.getWorldShopkeepers(worldName);
 		if (worldShopkeepers == null) return Collections.emptySet();
+		if (shopkeeperChunkMap.usesSnapshots()) {
+			Set<AbstractShopkeeper> result = new LinkedHashSet<>();
+			worldShopkeepers.getShopkeepersByChunk().forEach((coords, shops) -> {
+				if (this.isChunkActive(coords)) result.addAll(shops);
+			});
+			return Collections.unmodifiableSet(result);
+		}
 
 		// Note: Already unmodifiable.
 		Set<? extends AbstractShopkeeper> shopkeepersInActiveChunksView = new AbstractSet<AbstractShopkeeper>() {

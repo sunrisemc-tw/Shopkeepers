@@ -1,5 +1,7 @@
 package com.nisovin.shopkeepers.moving;
 
+import java.util.concurrent.CompletableFuture;
+
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -11,6 +13,7 @@ import org.bukkit.event.block.Action;
 import org.bukkit.event.player.PlayerInteractEvent;
 
 import com.nisovin.shopkeepers.api.events.ShopkeeperEditedEvent;
+import com.nisovin.shopkeepers.SKShopkeepersPlugin;
 import com.nisovin.shopkeepers.api.internal.util.Unsafe;
 import com.nisovin.shopkeepers.api.shopkeeper.Shopkeeper;
 import com.nisovin.shopkeepers.input.InputRequest;
@@ -18,6 +21,7 @@ import com.nisovin.shopkeepers.input.interaction.InteractionInput;
 import com.nisovin.shopkeepers.lang.Messages;
 import com.nisovin.shopkeepers.shopcreation.ShopkeeperPlacement;
 import com.nisovin.shopkeepers.shopkeeper.AbstractShopType;
+import com.nisovin.shopkeepers.shopkeeper.AbstractShopkeeper;
 import com.nisovin.shopkeepers.shopobjects.AbstractShopObjectType;
 import com.nisovin.shopkeepers.util.bukkit.TextUtils;
 import com.nisovin.shopkeepers.util.inventory.ItemUtils;
@@ -152,7 +156,7 @@ public class ShopkeeperMoving {
 		}
 	}
 
-	public boolean requestMove(
+	public CompletableFuture<Boolean> requestMove(
 			Player player,
 			Shopkeeper shopkeeper,
 			Location newLocation,
@@ -161,7 +165,7 @@ public class ShopkeeperMoving {
 		Validate.notNull(player, "player is null");
 		Validate.notNull(shopkeeper, "shopkeeper is null");
 		Validate.notNull(newLocation, "newLocation is null");
-		if (!shopkeeper.isValid()) return false;
+		if (!shopkeeper.isValid()) return CompletableFuture.completedFuture(false);
 
 		// Validate the new spawn location:
 		boolean isSpawnLocationValid = shopkeeperPlacement.validateSpawnLocation(
@@ -175,20 +179,26 @@ public class ShopkeeperMoving {
 		);
 		if (!isSpawnLocationValid) {
 			TextUtils.sendMessage(player, Messages.shopkeeperMoveAborted);
-			return false;
+			return CompletableFuture.completedFuture(false);
 		}
 
 		// Move the shopkeeper:
-		shopkeeper.teleport(newLocation, blockFace);
-
-		// Inform the player:
-		TextUtils.sendMessage(player, Messages.shopkeeperMoved);
-
-		// Call an event:
-		Bukkit.getPluginManager().callEvent(new ShopkeeperEditedEvent(shopkeeper, player));
-
-		// Save the shopkeeper:
-		shopkeeper.save();
-		return true;
+		var registry = SKShopkeepersPlugin.getInstance().getShopkeeperRegistry();
+		CompletableFuture<Boolean> result = ((AbstractShopkeeper) shopkeeper)
+				.teleportAsync(newLocation, blockFace)
+				.thenCompose(success -> {
+					if (!success) return CompletableFuture.completedFuture(false);
+					return registry.runOnOwner((AbstractShopkeeper) shopkeeper, () -> {
+						if (!shopkeeper.isValid()) return false;
+						Bukkit.getPluginManager().callEvent(
+								new ShopkeeperEditedEvent(shopkeeper, player));
+						shopkeeper.save();
+						return true;
+					});
+				});
+		return result.whenComplete((success, error) -> registry.runOnSender(player,
+						() -> TextUtils.sendMessage(player,
+								error == null && Boolean.TRUE.equals(success)
+										? Messages.shopkeeperMoved : Messages.shopkeeperMoveAborted)));
 	}
 }

@@ -3,16 +3,15 @@ package com.nisovin.shopkeepers.shopkeeper.ticking;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-
-import org.bukkit.scheduler.BukkitRunnable;
+import java.util.concurrent.CopyOnWriteArraySet;
 
 import com.nisovin.shopkeepers.SKShopkeepersPlugin;
 import com.nisovin.shopkeepers.debug.DebugOptions;
 import com.nisovin.shopkeepers.shopkeeper.AbstractShopkeeper;
+import com.nisovin.shopkeepers.util.bukkit.SchedulerUtils;
 import com.nisovin.shopkeepers.util.java.CyclicCounter;
 import com.nisovin.shopkeepers.util.java.Validate;
 import com.nisovin.shopkeepers.util.logging.Log;
@@ -42,13 +41,13 @@ public class ShopkeeperTicker {
 	public static final int TICKING_GROUPS = 4;
 	private static final CyclicCounter tickingGroupCounter = new CyclicCounter(TICKING_GROUPS);
 
-	public static int nextTickingGroup() {
+	public static synchronized int nextTickingGroup() {
 		return tickingGroupCounter.getAndIncrement();
 	}
 
 	private static final class TickingGroup {
 
-		private final Set<AbstractShopkeeper> shopkeepers = new LinkedHashSet<>();
+		private final Set<AbstractShopkeeper> shopkeepers = new CopyOnWriteArraySet<>();
 
 		TickingGroup() {
 		}
@@ -116,7 +115,7 @@ public class ShopkeeperTicker {
 		// since shopkeepers should stop their ticking automatically once they are deactivated.
 		// However, if the plugin is shut down during shopkeeper ticking, we can end up with still
 		// pending registration changes.
-		if (currentlyTicking) {
+		if (currentlyTicking || plugin.getFoliaLib().isFolia()) {
 			// Reset:
 			currentlyTicking = false;
 			dirty = false;
@@ -221,12 +220,14 @@ public class ShopkeeperTicker {
 		new ShopkeeperTickTask().start();
 	}
 
-	private final class ShopkeeperTickTask extends BukkitRunnable {
+	private final class ShopkeeperTickTask implements Runnable {
 
 		private static final int PERIOD = TICKING_PERIOD_TICKS / TICKING_GROUPS;
 
 		void start() {
-			this.runTaskTimer(plugin, PERIOD, PERIOD);
+			// The driver runs on the global thread; on Folia the per-shopkeeper ticking is dispatched
+			// onto the respective region (see tickShopkeeper).
+			SchedulerUtils.runTaskTimerGloballyOrOmit(this, PERIOD, PERIOD);
 		}
 
 		@Override
@@ -238,9 +239,16 @@ public class ShopkeeperTicker {
 	private void tickShopkeepers() {
 		dirty = false;
 
-		currentlyTicking = true;
+		currentlyTicking = !plugin.getFoliaLib().isFolia();
 		TickingGroup tickingGroup = this.getTickingGroup(activeTickingGroup.getValue());
-		tickingGroup.getShopkeepers().forEach(this::tickShopkeeper);
+		if (plugin.getFoliaLib().isFolia()) {
+			// On Folia the per-shopkeeper ticking is dispatched onto region threads, which may run
+			// concurrently with modifications of the ticking group. We therefore iterate over a
+			// snapshot:
+			new ArrayList<>(tickingGroup.getShopkeepers()).forEach(this::tickShopkeeper);
+		} else {
+			tickingGroup.getShopkeepers().forEach(this::tickShopkeeper);
+		}
 		currentlyTicking = false;
 
 		// Process pending shopkeeper ticking registration changes:
@@ -268,6 +276,32 @@ public class ShopkeeperTicker {
 		// Skip if the shopkeeper is no longer ticking (e.g. if it got removed or deactivated while
 		// it was pending to be ticked):
 		if (!shopkeeper.isTicking()) return;
+
+		// On Folia the shopkeeper (and its shop object) is ticked on the thread that owns its region.
+		// Because the tick then runs outside the synchronous driver, we trigger a delayed save per
+		// shopkeeper instead of aggregating via the shared dirty flag.
+		if (plugin.getFoliaLib().isFolia()) {
+			// Dispatch onto the shopkeeper's current owner (the entity's region for spawned entity
+			// objects, otherwise the location's region), and re-validate the owner in the callback
+			// so that a shopkeeper whose owner changed after dispatch (e.g. its entity was
+			// teleported to another region) is not ticked on a stale region:
+			plugin.getShopkeeperRegistry().runOnOwner(shopkeeper, () -> {
+				if (!shopkeeper.isTicking()) return true;
+
+				try {
+					shopkeeper.tick();
+				} catch (Throwable e) {
+					Log.severe(shopkeeper.getLogPrefix() + "Error during ticking!", e);
+				}
+
+				if (shopkeeper.isDirty() || !shopkeeper.isValid()) {
+					plugin.getShopkeeperStorage().saveDelayed();
+				}
+
+				return true;
+			});
+			return;
+		}
 
 		// Tick the shopkeeper:
 		try {

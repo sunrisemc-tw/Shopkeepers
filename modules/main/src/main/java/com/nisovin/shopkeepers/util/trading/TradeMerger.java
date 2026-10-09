@@ -1,19 +1,23 @@
 package com.nisovin.shopkeepers.util.trading;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
-import org.bukkit.Bukkit;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.plugin.Plugin;
-import org.bukkit.scheduler.BukkitTask;
 import org.checkerframework.checker.initialization.qual.UnknownInitialization;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import com.nisovin.shopkeepers.SKShopkeepersPlugin;
 import com.nisovin.shopkeepers.api.events.ShopkeeperTradeEvent;
 import com.nisovin.shopkeepers.api.internal.util.Unsafe;
+import com.nisovin.shopkeepers.util.bukkit.SchedulerUtils;
 import com.nisovin.shopkeepers.util.bukkit.Ticks;
 import com.nisovin.shopkeepers.util.java.Validate;
+import com.tcoded.folialib.wrapper.task.WrappedTask;
 
 /**
  * Merges sequentially triggered shopkeeper trades that involve the same player, shopkeeper, and
@@ -58,6 +62,11 @@ public class TradeMerger {
 	private final Plugin plugin;
 	private final Consumer<MergedTrades> mergedTradesConsumer;
 	private final MergeMode mergeMode;
+	private final Map<UUID, TradeMerger> playerMergers = new HashMap<>();
+	private @Nullable TradeMerger parentMerger;
+	private @Nullable UUID playerId;
+	private boolean playerScoped = false;
+	private boolean enabled = true;
 	// The maximum time span between the first and the last merged trade:
 	private long mergeDurationTicks; // Can be 0 to disable the trade merging
 	private long mergeDurationNanos;
@@ -74,8 +83,8 @@ public class TradeMerger {
 	private long mergeEndNanos;
 	private long lastMergedTradeNanos;
 
-	private @Nullable BukkitTask mergeDurationTask = null;
-	private @Nullable BukkitTask nextMergeTimeoutTask = null;
+	private @Nullable WrappedTask mergeDurationTask = null;
+	private @Nullable WrappedTask nextMergeTimeoutTask = null;
 	// This is set to the lastMergedTradeNanos at the time the nextMergeTimeoutTask is started.
 	private long nextMergeTimeoutStartNanos;
 
@@ -113,8 +122,8 @@ public class TradeMerger {
 	 *            {@code mergeDurationTicks}
 	 * @return this {@link TradeMerger}
 	 */
-	public TradeMerger withMergeDurations(long mergeDurationTicks, long nextMergeTimeoutTicks) {
-		Validate.State.isTrue(previousTrades == null,
+	public synchronized TradeMerger withMergeDurations(long mergeDurationTicks, long nextMergeTimeoutTicks) {
+		Validate.State.isTrue(previousTrades == null && playerMergers.isEmpty(),
 				"This TradeMerger cannot be reconfigured while it is already merging trades.");
 		Validate.State.isTrue(mergeMode == MergeMode.DURATION,
 				"Calling this method is only valid when using MergeMode DURATION.");
@@ -135,10 +144,14 @@ public class TradeMerger {
 		this.nextMergeTimeoutNanos = Ticks.toNanos(nextMergeTimeoutTicks);
 	}
 
-	public void onEnable() {
+	public synchronized void onEnable() {
+		enabled = true;
 	}
 
-	public void onDisable() {
+	public synchronized void onDisable() {
+		enabled = false;
+		playerMergers.values().forEach(TradeMerger::onDisable);
+		playerMergers.clear();
 		// Process the previous trades, if there are any:
 		// This also stops the delayed tasks.
 		this.processPreviousTrades();
@@ -151,8 +164,24 @@ public class TradeMerger {
 	 * @param tradeEvent
 	 *            the trade event
 	 */
-	public void mergeTrade(ShopkeeperTradeEvent tradeEvent) {
+	public synchronized void mergeTrade(ShopkeeperTradeEvent tradeEvent) {
 		Validate.notNull(tradeEvent, "tradeEvent is null");
+		if (!enabled) return;
+		// Different region threads must never process each other's pending trades.
+		if (!playerScoped && SKShopkeepersPlugin.getInstance().getFoliaLib().isFolia()) {
+			TradeMerger playerMerger = playerMergers.computeIfAbsent(
+					tradeEvent.getPlayer().getUniqueId(), playerId -> {
+						TradeMerger merger = new TradeMerger(plugin, mergeMode, mergedTradesConsumer);
+						merger.playerScoped = true;
+						merger.parentMerger = this;
+						merger.playerId = playerId;
+						merger.setMergeDurations(mergeDurationTicks, nextMergeTimeoutTicks);
+						return merger;
+					});
+			playerMerger.mergeTrade(tradeEvent);
+			playerMerger.removeIdlePlayerMerger();
+			return;
+		}
 		long nowNanos = System.nanoTime();
 		MergedTrades previousTrades = this.previousTrades;
 		if (previousTrades == null) {
@@ -215,19 +244,29 @@ public class TradeMerger {
 		this.endMergeDurationTask();
 
 		// Start a new delayed task that ends the trade merging after a certain maximum duration:
-		mergeDurationTask = Bukkit.getScheduler().runTaskLater(
-				plugin,
-				new MaxMergeDurationTimeoutTask(),
+		// The task runs on the region that owns the trading player (where the trades took place):
+		mergeDurationTask = SchedulerUtils.runTaskLaterOrOmit(
+				Unsafe.assertNonNull(previousTrades).getInitialTrade().getPlayer(),
+				new MaxMergeDurationTimeoutTask(Unsafe.assertNonNull(previousTrades)),
 				mergeDurationTicks
 		);
 	}
 
 	private class MaxMergeDurationTimeoutTask implements Runnable {
+		private final MergedTrades trades;
+
+		private MaxMergeDurationTimeoutTask(MergedTrades trades) {
+			this.trades = trades;
+		}
+
 		@Override
 		public void run() {
-			assert previousTrades != null; // Otherwise this task would have already been cancelled
-			mergeDurationTask = null;
-			processPreviousTrades();
+			synchronized (parentMerger != null ? parentMerger : TradeMerger.this) {
+				if (previousTrades != trades) return;
+				mergeDurationTask = null;
+				processPreviousTrades();
+				removeIdlePlayerMerger();
+			}
 		}
 	}
 
@@ -272,26 +311,43 @@ public class TradeMerger {
 		assert taskDelayTicks >= 1; // Due to the threshold checked above
 		// Keep track of the timestamp of the last merged trade:
 		nextMergeTimeoutStartNanos = lastMergedTradeNanos;
-		nextMergeTimeoutTask = Bukkit.getScheduler().runTaskLater(
-				plugin,
-				new NextMergeTimeoutTask(),
+		nextMergeTimeoutTask = SchedulerUtils.runTaskLaterOrOmit(
+				Unsafe.assertNonNull(previousTrades).getInitialTrade().getPlayer(),
+				new NextMergeTimeoutTask(Unsafe.assertNonNull(previousTrades), nextMergeTimeoutStartNanos),
 				taskDelayTicks
 		);
 	}
 
 	private class NextMergeTimeoutTask implements Runnable {
+		private final MergedTrades trades;
+		private final long startNanos;
+
+		private NextMergeTimeoutTask(MergedTrades trades, long startNanos) {
+			this.trades = trades;
+			this.startNanos = startNanos;
+		}
+
 		@Override
 		public void run() {
-			assert previousTrades != null; // Otherwise this task would have already been cancelled
-			nextMergeTimeoutTask = null;
+			synchronized (parentMerger != null ? parentMerger : TradeMerger.this) {
+				if (previousTrades != trades || nextMergeTimeoutStartNanos != startNanos) return;
+				nextMergeTimeoutTask = null;
 
-			// If there has been another trade in the meantime, restart this timeout task:
-			if (lastMergedTradeNanos != nextMergeTimeoutStartNanos) {
-				startNextMergeTimeoutTask();
-			} else {
-				// Otherwise, abort the trade merging:
-				processPreviousTrades();
+				if (lastMergedTradeNanos != startNanos) {
+					startNextMergeTimeoutTask();
+					removeIdlePlayerMerger();
+				} else {
+					processPreviousTrades();
+					removeIdlePlayerMerger();
+				}
 			}
+		}
+	}
+
+	private void removeIdlePlayerMerger() {
+		@Nullable TradeMerger parent = parentMerger;
+		if (previousTrades == null && parent != null) {
+			parent.playerMergers.remove(playerId, this);
 		}
 	}
 
@@ -301,10 +357,12 @@ public class TradeMerger {
 	 * <p>
 	 * Calling this method has no effect if there are no pending trades to process.
 	 */
-	public void processPreviousTrades() {
-		if (previousTrades == null) return;
+	public synchronized void processPreviousTrades() {
+		playerMergers.values().forEach(TradeMerger::processPreviousTrades);
+		MergedTrades trades = previousTrades;
+		if (trades == null) return;
 		this.endDelayedTasks();
-		mergedTradesConsumer.accept(Unsafe.assertNonNull(previousTrades));
 		previousTrades = null;
+		mergedTradesConsumer.accept(trades);
 	}
 }

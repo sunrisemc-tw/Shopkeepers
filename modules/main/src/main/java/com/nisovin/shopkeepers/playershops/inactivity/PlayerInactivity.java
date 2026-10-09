@@ -1,14 +1,14 @@
 package com.nisovin.shopkeepers.playershops.inactivity;
 
-import org.bukkit.Bukkit;
 import org.bukkit.plugin.Plugin;
-import org.bukkit.scheduler.BukkitTask;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import com.nisovin.shopkeepers.SKShopkeepersPlugin;
 import com.nisovin.shopkeepers.config.Settings;
+import com.nisovin.shopkeepers.util.bukkit.SchedulerUtils;
 import com.nisovin.shopkeepers.util.bukkit.Ticks;
 import com.nisovin.shopkeepers.util.java.Validate;
+import com.tcoded.folialib.wrapper.task.WrappedTask;
 
 /**
  * Processes shops that are owned by inactive players.
@@ -54,7 +54,7 @@ public class PlayerInactivity {
 		private static final long INTERVAL_TICKS = Ticks.PER_SECOND * 60 * 60 * 4L;
 
 		private final Plugin plugin;
-		private @Nullable BukkitTask task = null;
+		private @Nullable WrappedTask task = null;
 
 		public ProcessInactivePlayerShopsTask(Plugin plugin) {
 			Validate.notNull(plugin, "plugin is null");
@@ -65,7 +65,9 @@ public class PlayerInactivity {
 			this.stop(); // Stop the task if it is already running
 
 			// The task runs once shortly after start, and then periodically in large intervals:
-			task = Bukkit.getScheduler().runTaskTimer(plugin, this, 5L, INTERVAL_TICKS);
+			// It runs on the global thread; the actual inactivity lookups are performed
+			// asynchronously by the triggered procedure.
+			task = SchedulerUtils.runTaskTimerGloballyOrOmit(this, 5L, INTERVAL_TICKS);
 		}
 
 		public void stop() {

@@ -176,55 +176,67 @@ public class ShopkeeperEditorLayout extends EditorLayout {
 				() -> {
 					// Delete confirmed.
 					if (!player.isValid()) return;
-					if (!shopkeeper.isValid()) {
-						// The shopkeeper has already been removed in the meantime.
-						TextUtils.sendMessage(player, Messages.shopAlreadyRemoved);
-						return;
-					}
+					var registry = SKShopkeepersPlugin.getInstance().getShopkeeperRegistry();
+					registry.runOnOwner(shopkeeper, () -> {
+						if (!shopkeeper.isValid()) {
+							// The shopkeeper has already been removed in the meantime.
+							registry.runOnSender(player,
+									() -> TextUtils.sendMessage(player, Messages.shopAlreadyRemoved));
+							return false;
+						}
 
-					// The player's access permission might have changed in the meantime:
-					if (shopkeeper instanceof AbstractPlayerShopkeeper playerShop
-							&& !playerShop.checkAccess(player, DefaultPlayerShopAccessLevels.FULL(), false)) {
-						return;
-					}
+						// The player's access permission might have changed in the meantime:
+						if (shopkeeper instanceof AbstractPlayerShopkeeper playerShop
+								&& !playerShop.checkAccess(player, DefaultPlayerShopAccessLevels.FULL(), true)) {
+							registry.runOnSender(player,
+									() -> TextUtils.sendMessage(player, Messages.noPermission));
+							return false;
+						}
 
-					// Shops that retain a hire cost item are restored to their for-hire state
-					// instead of being deleted, so that other players can hire them again. This
-					// matches how these shops are handled when they expire.
-					// Note: This applies to admins as well, so that they do not unknowingly observe
-					// a behavior that differs from what other players get.
-					if (shopkeeper instanceof AbstractPlayerShopkeeper playerShop
-							&& playerShop.isHireable()) {
-						playerShop.setForHire();
+						// Shops that retain a hire cost item are restored to their for-hire state
+						// instead of being deleted, so that other players can hire them again. This
+						// matches how these shops are handled when they expire.
+						// Note: This applies to admins as well, so that they do not unknowingly observe
+						// a behavior that differs from what other players get.
+						if (shopkeeper instanceof AbstractPlayerShopkeeper playerShop
+								&& playerShop.isHireable()) {
+							playerShop.setForHire();
 
-						// Call shopkeeper edited event:
-						Bukkit.getPluginManager().callEvent(new ShopkeeperEditedEvent(shopkeeper, player));
+							// Call shopkeeper edited event:
+							Bukkit.getPluginManager().callEvent(new ShopkeeperEditedEvent(shopkeeper, player));
 
-						// Save:
-						shopkeeper.save();
+							// Save:
+							shopkeeper.save();
 
-						TextUtils.sendMessage(player, Messages.shopRestoredForHire);
-						sendSetNotForHireToDeleteHint(player);
-						return;
-					}
+							registry.runOnSender(player, () -> {
+								TextUtils.sendMessage(player, Messages.shopRestoredForHire);
+								sendSetNotForHireToDeleteHint(player);
+							});
+							return true;
+						}
 
-					// Call event:
-					PlayerDeleteShopkeeperEvent deleteEvent = ShopkeeperEventHelper.callPlayerDeleteShopkeeperEvent(
-							shopkeeper,
-							player
-					);
-					Bukkit.getPluginManager().callEvent(deleteEvent);
-					if (!deleteEvent.isCancelled()) {
-						// Delete the shopkeeper and save:
-						shopkeeper.delete(player);
-						shopkeeper.save();
+						// Call event:
+						PlayerDeleteShopkeeperEvent deleteEvent = ShopkeeperEventHelper.callPlayerDeleteShopkeeperEvent(
+								shopkeeper,
+								player
+						);
+						if (!deleteEvent.isCancelled()) {
+							// Delete the shopkeeper and save:
+							shopkeeper.delete(player);
+							shopkeeper.save();
 
-						TextUtils.sendMessage(player, Messages.shopRemoved);
-					}
-					// Else: Cancelled by another plugin.
-					// Note: We don't send a message in this case here, because we expect that the
-					// other plugin sends a more specific message anyway if it wants to inform the
-					// player.
+							registry.runOnSender(player,
+									() -> TextUtils.sendMessage(player, Messages.shopRemoved));
+						}
+						// Else: Cancelled by another plugin.
+						// Note: We don't send a message in this case here, because we expect that the
+						// other plugin sends a more specific message anyway if it wants to inform the
+						// player.
+						return !deleteEvent.isCancelled();
+					}).whenComplete((success, error) -> {
+						if (error != null) registry.runOnSender(player,
+								() -> player.sendMessage("Shopkeeper removal failed."));
+					});
 				}, () -> {
 					// Delete cancelled.
 					if (!player.isValid()) return;
@@ -247,6 +259,11 @@ public class ShopkeeperEditorLayout extends EditorLayout {
 		}
 
 		return new ActionButton() {
+			@Override
+			protected boolean requiresShopOwner() {
+				return true;
+			}
+
 			@Override
 			public @Nullable ItemStack getIcon() {
 				return shopkeeper.isOpen() ? DerivedSettings.shopOpenButtonItem.createItemStack()

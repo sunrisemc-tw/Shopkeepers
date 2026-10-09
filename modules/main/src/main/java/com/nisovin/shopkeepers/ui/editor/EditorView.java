@@ -15,6 +15,7 @@ import org.bukkit.inventory.ItemStack;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import com.nisovin.shopkeepers.api.internal.util.Unsafe;
+import com.nisovin.shopkeepers.SKShopkeepersPlugin;
 import com.nisovin.shopkeepers.api.util.UnmodifiableItemStack;
 import com.nisovin.shopkeepers.shopkeeper.TradingRecipeDraft;
 import com.nisovin.shopkeepers.ui.lib.UISessionManager;
@@ -126,7 +127,7 @@ public abstract class EditorView extends View {
 		// Lazily setup when first requested:
 		var layout = this.getLayout();
 
-		List<TradingRecipeDraft> recipes = this.getTradingRecipesAdapter().getTradingRecipes();
+		List<TradingRecipeDraft> recipes = this.getInitialRecipes();
 
 		// Create inventory:
 		Inventory inventory = Bukkit.createInventory(
@@ -153,6 +154,14 @@ public abstract class EditorView extends View {
 	}
 
 	protected abstract String getTitle();
+
+	protected List<TradingRecipeDraft> getInitialRecipes() {
+		return this.getTradingRecipesAdapter().getTradingRecipes();
+	}
+
+	protected @Nullable ItemStack getButtonIcon(Button button) {
+		return button.getIcon();
+	}
 
 	protected void setupCurrentPage() {
 		// Setup inventory:
@@ -193,7 +202,7 @@ public abstract class EditorView extends View {
 		for (int i = 0; i < buttons.length; ++i) {
 			Button button = buttons[i];
 			if (button == null) continue;
-			ItemStack icon = button.getIcon();
+			ItemStack icon = this.getButtonIcon(button);
 			if (icon == null) continue;
 			inventory.setItem(button.getSlot(), icon);
 		}
@@ -214,7 +223,7 @@ public abstract class EditorView extends View {
 			ItemStack icon = null;
 			Button button = buttons[buttonIndex];
 			if (button != null) {
-				icon = button.getIcon();
+				icon = this.getButtonIcon(button);
 			}
 
 			// Null will clear the slot (which is required if this is called to refresh the buttons
@@ -449,7 +458,7 @@ public abstract class EditorView extends View {
 		int slot = button.getSlot();
 		if (slot == Button.NO_SLOT) return;
 
-		ItemStack icon = button.getIcon();
+		ItemStack icon = this.getButtonIcon(button);
 		this.getInventory().setItem(slot, icon);
 		this.syncInventory();
 	}
@@ -461,7 +470,10 @@ public abstract class EditorView extends View {
 				.getUISessionsForContext(this.getContext().getObject(), this.getUIType())
 				.forEach(view -> {
 					if (view instanceof EditorView editorView) {
-						editorView.updateButton(buttonIdentity);
+						SKShopkeepersPlugin.getInstance().getShopkeeperRegistry()
+								.runOnSender(editorView.getPlayer(), () -> {
+									if (editorView.isValid()) editorView.updateButton(buttonIdentity);
+								});
 					}
 				});
 	}

@@ -3,6 +3,7 @@ package com.nisovin.shopkeepers.commands.shopkeepers;
 import org.bukkit.entity.Player;
 
 import com.nisovin.shopkeepers.api.ShopkeepersPlugin;
+import com.nisovin.shopkeepers.SKShopkeepersPlugin;
 import com.nisovin.shopkeepers.api.shopkeeper.Shopkeeper;
 import com.nisovin.shopkeepers.api.ui.DefaultUITypes;
 import com.nisovin.shopkeepers.commands.arguments.ShopkeeperArgument;
@@ -14,6 +15,8 @@ import com.nisovin.shopkeepers.commands.lib.commands.PlayerCommand;
 import com.nisovin.shopkeepers.commands.lib.context.CommandContextView;
 import com.nisovin.shopkeepers.commands.util.ShopkeeperArgumentUtils.TargetShopkeeperFilter;
 import com.nisovin.shopkeepers.lang.Messages;
+import com.nisovin.shopkeepers.shopkeeper.AbstractShopkeeper;
+import com.nisovin.shopkeepers.ui.lib.UIState;
 
 class CommandEdit extends PlayerCommand {
 
@@ -45,6 +48,11 @@ class CommandEdit extends PlayerCommand {
 
 		// Try to open the shop editor window:
 		// Fails if the user does not have the permission to edit the shop.
-		shopkeeper.openEditorWindow(player);
+		SKShopkeepersPlugin.getInstance().getShopkeeperRegistry().runOnSender(player, () -> {
+			if (shopkeeper.isValid()) {
+				((AbstractShopkeeper) shopkeeper).openWindowAsync(
+						DefaultUITypes.EDITOR(), player, UIState.EMPTY);
+			}
+		});
 	}
 }

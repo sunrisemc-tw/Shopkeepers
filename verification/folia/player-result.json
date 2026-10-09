@@ -1,0 +1,33 @@
+{
+  "passed": true,
+  "jar_sha256": "955b9640af95df0cae1268511427388208bd97fbc47a128fdef9c0ef6f0c947f",
+  "coverage_limits": [
+    "reloadAsync API exercised; /shopkeepers reload command feedback not exercised",
+    "NaN move future completed exceptionally; boolean-false teleport branch and event cancellation not exercised",
+    "GUI opened through API; physical right-click not exercised",
+    "removeall admin console branch only; player shops, hireable skips and cancelled deletion not exercised",
+    "one offline operator; no concurrent trade or move stress",
+    "save + graceful stop + cold restart; abrupt process crash not exercised"
+  ],
+  "reload": true,
+  "badmove": true,
+  "distant_move": true,
+  "console_removeall_count": 2,
+  "editor_page_click": true,
+  "merchant_open": true,
+  "emerald_before": 8,
+  "emerald_after": 6,
+  "diamond_after": 1,
+  "trade_events": 1,
+  "first_server_exit": 0,
+  "cold_restart_no_resurrection": true,
+  "server_exit": 0,
+  "errors": [],
+  "pending_destination_unpublished": true,
+  "distinct_destination_region": true,
+  "cleanup": {
+    "server_process_exited": true,
+    "mcc_tmux_session_removed": true,
+    "loopback_port_rebind": true
+  }
+}

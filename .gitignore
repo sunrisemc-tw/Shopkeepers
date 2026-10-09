@@ -51,3 +51,9 @@ Desktop.ini
 jabba
 repo
 **/.claude
+
+# Folia fork scratch artifacts (not part of the deliverable)
+.folia_*
+.folia-reference-*.patch
+TASK_folia*.md
+TASK_storage_review_feedback.md

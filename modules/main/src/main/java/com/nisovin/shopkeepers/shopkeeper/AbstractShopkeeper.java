@@ -8,6 +8,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
 import org.bukkit.Color;
@@ -56,16 +59,20 @@ import com.nisovin.shopkeepers.shopkeeper.ticking.ShopkeeperTicker;
 import com.nisovin.shopkeepers.shopobjects.AbstractShopObject;
 import com.nisovin.shopkeepers.shopobjects.AbstractShopObjectType;
 import com.nisovin.shopkeepers.shopobjects.ShopObjectData;
+import com.nisovin.shopkeepers.shopobjects.entity.base.BaseEntityShopObject;
 import com.nisovin.shopkeepers.text.Text;
 import com.nisovin.shopkeepers.ui.lib.UISessionManager;
 import com.nisovin.shopkeepers.ui.lib.UIState;
 import com.nisovin.shopkeepers.ui.lib.ViewProvider;
+import com.nisovin.shopkeepers.ui.editor.ShopkeeperEditorViewProvider;
 import com.nisovin.shopkeepers.ui.trading.TradingViewProvider;
 import com.nisovin.shopkeepers.util.annotations.ReadWrite;
 import com.nisovin.shopkeepers.util.bukkit.BlockLocation;
+import com.nisovin.shopkeepers.util.bukkit.BlockFaceUtils;
 import com.nisovin.shopkeepers.util.bukkit.ColorUtils;
 import com.nisovin.shopkeepers.util.bukkit.LocationUtils;
 import com.nisovin.shopkeepers.util.bukkit.PermissionUtils;
+import com.nisovin.shopkeepers.util.bukkit.SchedulerUtils;
 import com.nisovin.shopkeepers.util.bukkit.TextUtils;
 import com.nisovin.shopkeepers.util.data.container.DataContainer;
 import com.nisovin.shopkeepers.util.data.property.BasicProperty;
@@ -149,12 +156,12 @@ public abstract class AbstractShopkeeper implements Shopkeeper {
 	private AbstractShopObject shopObject = Unsafe.uncheckedNull(); // Not null after initialization
 	// TODO Move location information into ShopObject?
 	// Immutable instances, null for virtual shops, always has a world name:
-	private @Nullable BlockLocation location;
-	private float yaw;
+	private volatile @Nullable BlockLocation location;
+	private volatile float yaw;
 
-	private @Nullable ChunkCoords chunkCoords; // Null for virtual shops
+	private volatile @Nullable ChunkCoords chunkCoords; // Null for virtual shops
 	// The ChunkCoords by which the shopkeeper is currently stored:
-	private @Nullable ChunkCoords lastChunkCoords = null;
+	private volatile @Nullable ChunkCoords lastChunkCoords = null;
 	private boolean open = true;
 	private String name = ""; // Not null, can be empty
 
@@ -170,14 +177,16 @@ public abstract class AbstractShopkeeper implements Shopkeeper {
 	// Whether there have been changes to the shopkeeper's data that the storage is not yet aware
 	// of. A value of 'false' only indicates that the storage is aware of the latest data of the
 	// shopkeeper, not that it has actually persisted the data to disk yet.
-	private boolean dirty = false;
+	private volatile boolean dirty = false;
+	private long persistenceVersion = 0;
 	// Is currently registered:
-	private boolean valid = false;
-	private boolean active = false;
+	private volatile boolean valid = false;
+	private volatile boolean active = false;
+	private final AtomicBoolean movePending = new AtomicBoolean();
 	private boolean ticking = false;
 
 	// UI type identifier -> ViewProvider
-	private final Map<String, ViewProvider> viewProviders = new HashMap<>();
+	private final Map<String, ViewProvider> viewProviders = new ConcurrentHashMap<>();
 
 	// Internally used for load balancing purposes:
 	private final int tickingGroup = ShopkeeperTicker.nextTickingGroup();
@@ -590,7 +599,11 @@ public abstract class AbstractShopkeeper implements Shopkeeper {
 			Log.info(this.getLogPrefix() + "Marked dirty.", new Exception("stacktrace"));
 		}
 
-		dirty = true;
+		synchronized (this) {
+			dirty = true;
+			persistenceVersion++;
+		}
+
 		// Inform the storage that the shopkeeper is dirty:
 		if (this.isValid()) {
 			// If the shopkeeper is marked as dirty during creation or loading (while it is not yet
@@ -615,8 +628,16 @@ public abstract class AbstractShopkeeper implements Shopkeeper {
 	// Called by shopkeeper storage when it has retrieved the shopkeeper's latest data for the next
 	// save. The data might not yet have been persisted at that point.
 	// This may not be called if the shopkeeper was deleted.
-	public final void onSave() {
+	public final synchronized void onSave() {
 		dirty = false;
+	}
+
+	public final synchronized long getPersistenceVersion() {
+		return persistenceVersion;
+	}
+
+	public final synchronized void onSave(long version) {
+		if (persistenceVersion == version) dirty = false;
 	}
 
 	// ITEM UPDATES
@@ -770,6 +791,23 @@ public abstract class AbstractShopkeeper implements Shopkeeper {
 
 		// Custom processing done by sub-classes:
 		this.onAdded(cause);
+	}
+
+	public final void publishLoaded() {
+		assert !valid;
+		valid = true;
+	}
+
+	public final void completeLoaded() {
+		if (!valid) return;
+		this.onAdded(ShopkeeperAddedEvent.Cause.LOADED);
+		if (this.isDirty()) this.markDirty();
+	}
+
+	// Does not invoke live object hooks after Folia's regions have stopped.
+	public final void discardOnShutdown() {
+		valid = false;
+		active = false;
 	}
 
 	/**
@@ -1140,6 +1178,14 @@ public abstract class AbstractShopkeeper implements Shopkeeper {
 	@Override
 	public final void teleport(Location location, @Nullable BlockFace attachedBlockFace) {
 		Validate.notNull(location, "location is null");
+		if (SKShopkeepersPlugin.getInstance().getFoliaLib().isFolia()) {
+			this.teleportAsync(location, attachedBlockFace).whenComplete((success, error) -> {
+				if (error != null || !Boolean.TRUE.equals(success)) {
+					Log.warning(this.getLogPrefix() + "Shopkeeper move did not complete.");
+				}
+			});
+			return;
+		}
 
 		boolean spawned = shopObject.isSpawned();
 
@@ -1158,6 +1204,87 @@ public abstract class AbstractShopkeeper implements Shopkeeper {
 		if (spawned || !shopObject.getType().mustBeSpawned()) {
 			shopObject.move();
 		}
+	}
+
+	public final CompletableFuture<Boolean> teleportAsync(
+			Location location,
+			@Nullable BlockFace attachedBlockFace
+	) {
+		Validate.notNull(location, "location is null");
+		SKShopkeepersPlugin plugin = SKShopkeepersPlugin.getInstance();
+		if (!plugin.getFoliaLib().isFolia()) {
+			this.teleport(location, attachedBlockFace);
+			return CompletableFuture.completedFuture(true);
+		}
+
+		Location destination = location.clone();
+		BlockLocation.of(destination);
+		Validate.isTrue(attachedBlockFace == null || BlockFaceUtils.isBlockSide(attachedBlockFace),
+				"attachedBlockFace is not a block side");
+		if (!movePending.compareAndSet(false, true)) {
+			return CompletableFuture.completedFuture(false);
+		}
+
+		CompletableFuture<Boolean> result = plugin.getShopkeeperRegistry().runOnOwner(this, () -> {
+			if (!this.isValid() || this.isVirtual()) {
+				return CompletableFuture.completedFuture(false);
+			}
+
+			AbstractShopObject object = shopObject;
+			if (object instanceof BaseEntityShopObject && object.isSpawned()) {
+				return ((BaseEntityShopObject<?>) object).moveAsync(destination, () -> {
+					if (!this.isValid() || shopObject != object) return false;
+					this.setLocation(destination, attachedBlockFace);
+					return true;
+				});
+			}
+
+			// Static objects must remove their source object before handing off to the destination.
+			boolean spawned = object.isSpawned();
+			if (spawned) object.despawn();
+			CompletableFuture<Boolean> completion =
+					plugin.getShopkeeperRegistry().trackOwnerOperation(new CompletableFuture<>());
+			completion.whenComplete((success, error) -> {
+				if (spawned && !Boolean.TRUE.equals(success)) {
+					plugin.getShopkeeperRegistry().runOnOwner(this, () -> {
+						if (this.isValid() && shopObject == object) object.spawn();
+						return true;
+					});
+				}
+			});
+			if (SchedulerUtils.runTaskOrOmit(destination, () -> {
+				if (completion.isDone()) return;
+				if (!this.isValid() || shopObject != object) {
+					completion.complete(false);
+					return;
+				}
+
+				try {
+					this.setLocation(destination, attachedBlockFace);
+					// Static objects were despawned at the source. Objects that manage their own
+					// spawning (mustBeSpawned) must be respawned at the destination; others only
+					// need to move. This also covers same-chunk moves, which do not trigger the
+					// chunk activator's respawn.
+					if (object.getType().mustBeSpawned()) {
+						if (spawned && this.isActive() && !object.isSpawned()) {
+							object.spawn();
+						}
+					} else {
+						object.move();
+					}
+
+					completion.complete(true);
+				} catch (Throwable error) {
+					completion.completeExceptionally(error);
+				}
+			}) == null) {
+				completion.complete(false);
+			}
+
+			return completion;
+		}).thenCompose(operation -> operation);
+		result.whenComplete((success, error) -> movePending.set(false));
+		return plugin.getShopkeeperRegistry().trackOwnerOperation(result).copy();
 	}
 
 	@Override
@@ -1321,9 +1448,9 @@ public abstract class AbstractShopkeeper implements Shopkeeper {
 	 */
 	protected void onClosed() {
 		UISessionManager.getInstance()
-				.abortUISessionsForContextDelayed(this, DefaultUITypes.TRADING());
+				.abortUISessionsForContextDelayed(this.getLocation(), this, DefaultUITypes.TRADING());
 		UISessionManager.getInstance()
-				.abortUISessionsForContextDelayed(this, DefaultUITypes.HIRING());
+				.abortUISessionsForContextDelayed(this.getLocation(), this, DefaultUITypes.HIRING());
 	}
 
 	// NAMING
@@ -1672,6 +1799,15 @@ public abstract class AbstractShopkeeper implements Shopkeeper {
 	public boolean openWindow(UIType uiType, Player player, UIState uiState) {
 		Validate.notNull(uiType, "uiType is null");
 		Validate.notNull(player, "player is null");
+		var plugin = SKShopkeepersPlugin.getInstance();
+		if (plugin.getFoliaLib().isFolia()
+				&& (uiType == DefaultUITypes.EDITOR()
+						|| !plugin.getFoliaLib().getScheduler().isOwnedByCurrentRegion(player))) {
+			// The synchronous API acknowledges admission. Internal callers can await the result.
+			if (!this.isValid()) return false;
+			this.openWindowAsync(uiType, player, uiState);
+			return true;
+		}
 
 		String uiIdentifier = uiType.getIdentifier();
 
@@ -1690,6 +1826,56 @@ public abstract class AbstractShopkeeper implements Shopkeeper {
 		}
 
 		return UISessionManager.getInstance().requestUI(viewProvider, player, uiState);
+	}
+
+	public CompletableFuture<Boolean> openWindowAsync(
+			UIType uiType,
+			Player player,
+			UIState uiState
+	) {
+		var plugin = SKShopkeepersPlugin.getInstance();
+		if (!plugin.getFoliaLib().isFolia()) {
+			return CompletableFuture.completedFuture(this.openWindow(uiType, player, uiState));
+		}
+
+		var registry = plugin.getShopkeeperRegistry();
+		return registry.runOnOwner(this, () -> {
+			ViewProvider provider = this.getViewProvider(uiType);
+			if (!this.isValid() || provider == null) {
+				return CompletableFuture.completedFuture(false);
+			}
+
+			var prepared = provider instanceof ShopkeeperEditorViewProvider editor
+					? editor.createPreparedView(player, uiState) : null;
+			if (provider instanceof ShopkeeperEditorViewProvider && prepared == null) {
+				return CompletableFuture.completedFuture(false);
+			}
+
+			CompletableFuture<Boolean> result = registry.trackOwnerOperation(new CompletableFuture<>());
+			try {
+				if (plugin.getFoliaLib().getScheduler().runAtEntityLater(player, () -> {
+					if (result.isDone()) return;
+					if (!player.isOnline() || !this.isValid() || this.getViewProvider(uiType) != provider) {
+						result.complete(false);
+						return;
+					}
+
+					try {
+						result.complete(prepared == null
+								? UISessionManager.getInstance().requestUI(provider, player, uiState)
+								: UISessionManager.getInstance().requestPreparedUI(prepared, player, uiState));
+					} catch (Throwable error) {
+						result.completeExceptionally(error);
+					}
+				}, () -> result.complete(false), 1L) == null) {
+					result.complete(false);
+				}
+			} catch (RuntimeException error) {
+				result.completeExceptionally(error);
+			}
+
+			return result;
+		}).thenCompose(result -> result);
 	}
 
 	/**

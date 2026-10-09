@@ -5,6 +5,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 
 import org.bukkit.command.CommandSender;
@@ -49,6 +50,7 @@ import com.nisovin.shopkeepers.tradelog.history.ShopSelector.ByShopIdentifier;
 import com.nisovin.shopkeepers.tradelog.history.TradingHistoryRequest;
 import com.nisovin.shopkeepers.tradelog.history.TradingHistoryResult;
 import com.nisovin.shopkeepers.util.bukkit.PermissionUtils;
+import com.nisovin.shopkeepers.util.bukkit.SchedulerUtils;
 import com.nisovin.shopkeepers.util.bukkit.TextUtils;
 import com.nisovin.shopkeepers.util.java.Range;
 import com.nisovin.shopkeepers.util.java.TimeUtils;
@@ -372,6 +374,16 @@ class CommandHistory extends Command {
 		Range range = new Range.PageRange(page, ENTRIES_PER_PAGE);
 		TradingHistoryRequest historyRequest = new TradingHistoryRequest(playerSelector, shopSelector, range);
 
+		// Executor that sends the (asynchronously retrieved) history result back on the region that
+		// owns the command sender: The sender's region for players, or the global thread otherwise.
+		Executor syncExecutor = command -> {
+			if (sender instanceof Player) {
+				SchedulerUtils.runTaskOrOmit((Player) sender, command);
+			} else {
+				SchedulerUtils.runTaskGloballyOrOmit(command);
+			}
+		};
+
 		final long historyFetchStart = System.nanoTime();
 		tradingHistoryProvider.getTradingHistory(historyRequest)
 				.thenAcceptAsync(historyResult -> {
@@ -389,7 +401,7 @@ class CommandHistory extends Command {
 						sender.sendMessage("Fetch: " + TimeUnit.NANOSECONDS.toMillis(fetchDuration) + " ms"
 								+ " | Print: " + TimeUnit.NANOSECONDS.toMillis(printDuration) + " ms");
 					}
-				}, SKShopkeepersPlugin.getInstance().getSyncExecutor())
+				}, syncExecutor)
 				.exceptionally(exception -> {
 					// Error case:
 					// TODO Localize?

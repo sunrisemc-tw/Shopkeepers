@@ -43,7 +43,8 @@ public final class EntityUtils {
 	private static final double GROUND_DISTANCE_CHECK_RANGE = 1.96D;
 
 	// Temporarily re-used location object:
-	private static final Location SHARED_LOCATION = new Location(null, 0, 0, 0);
+	private static final ThreadLocal<Location> SHARED_LOCATION = ThreadLocal.withInitial(
+			() -> new Location(null, 0, 0, 0));
 
 	private static final Set<Material> LAVA = Collections.singleton(Material.LAVA);
 
@@ -74,7 +75,7 @@ public final class EntityUtils {
 	public static @Nullable Location getStandingLocation(EntityType entityType, Block block) {
 		try {
 			// We check for collisions from slightly below the top of the block:
-			Location location = Unsafe.assertNonNull(block.getLocation(SHARED_LOCATION))
+			Location location = Unsafe.assertNonNull(block.getLocation(SHARED_LOCATION.get()))
 					.add(0.5, GROUND_DISTANCE_CHECK_OFFSET, 0.5);
 
 			double distanceToGround = WorldUtils.getCollisionDistanceToGround(
@@ -93,7 +94,7 @@ public final class EntityUtils {
 			return location.clone();
 		} finally {
 			// Cleanup temporarily used location
-			SHARED_LOCATION.setWorld(null);
+			SHARED_LOCATION.get().setWorld(null);
 		}
 	}
 
@@ -269,7 +270,7 @@ public final class EntityUtils {
 		Player nearestPlayer = null;
 		double nearestDistanceSq = Double.MAX_VALUE;
 		for (Player player : world.getPlayers()) {
-			Location playerLocation = Unsafe.assertNonNull(player.getLocation(SHARED_LOCATION));
+			Location playerLocation = Unsafe.assertNonNull(player.getLocation(SHARED_LOCATION.get()));
 			double distanceSq = LocationUtils.getDistanceSquared(playerLocation, location);
 			if (distanceSq <= radiusSq
 					&& distanceSq < nearestDistanceSq
@@ -277,7 +278,7 @@ public final class EntityUtils {
 				nearestPlayer = player;
 				nearestDistanceSq = distanceSq;
 			}
-			SHARED_LOCATION.setWorld(null); // Reset
+			SHARED_LOCATION.get().setWorld(null); // Reset
 		}
 		return nearestPlayer;
 	}
@@ -298,12 +299,12 @@ public final class EntityUtils {
 		double radiusSq = radius * radius;
 		world.getPlayers().forEach(player -> {
 			assert player != null;
-			Location playerLocation = Unsafe.assertNonNull(player.getLocation(SHARED_LOCATION));
+			Location playerLocation = Unsafe.assertNonNull(player.getLocation(SHARED_LOCATION.get()));
 			if (LocationUtils.getDistanceSquared(playerLocation, location) <= radiusSq
 					&& filter.test(Unsafe.assertNonNull(player))) {
 				players.add(player);
 			}
-			SHARED_LOCATION.setWorld(null); // Reset
+			SHARED_LOCATION.get().setWorld(null); // Reset
 		});
 		return players;
 	}

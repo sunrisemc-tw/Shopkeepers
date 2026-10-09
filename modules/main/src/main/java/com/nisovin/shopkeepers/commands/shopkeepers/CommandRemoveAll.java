@@ -5,12 +5,17 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicIntegerArray;
 
 import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
+import org.checkerframework.checker.nullness.qual.NonNull;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import com.nisovin.shopkeepers.api.ShopkeepersPlugin;
+import com.nisovin.shopkeepers.SKShopkeepersPlugin;
 import com.nisovin.shopkeepers.api.events.PlayerDeleteShopkeeperEvent;
 import com.nisovin.shopkeepers.api.internal.util.Unsafe;
 import com.nisovin.shopkeepers.api.shopkeeper.Shopkeeper;
@@ -32,6 +37,7 @@ import com.nisovin.shopkeepers.commands.util.ShopkeeperArgumentUtils;
 import com.nisovin.shopkeepers.commands.util.ShopkeeperArgumentUtils.OwnedPlayerShopsResult;
 import com.nisovin.shopkeepers.events.ShopkeeperEventHelper;
 import com.nisovin.shopkeepers.lang.Messages;
+import com.nisovin.shopkeepers.shopkeeper.AbstractShopkeeper;
 import com.nisovin.shopkeepers.util.bukkit.PermissionUtils;
 import com.nisovin.shopkeepers.util.bukkit.TextUtils;
 import com.nisovin.shopkeepers.util.java.ObjectUtils;
@@ -222,80 +228,94 @@ class CommandRemoveAll extends Command {
 			// Note: New shops might have been created in the meantime, but the command only affects
 			// the already determined affected shops.
 			// Remove shops:
-			int invalidShops = 0;
-			int cancelledDeletions = 0;
-			int skippedHireableShops = 0;
-			int actualShopCount = 0;
+			var registry = SKShopkeepersPlugin.getInstance().getShopkeeperRegistry();
+			AtomicIntegerArray counts = new AtomicIntegerArray(5);
+			List<CompletableFuture<@Nullable Void>> operations = new ArrayList<>();
 			for (Shopkeeper shopkeeper : affectedShops) {
-				// Skip the shopkeeper if it no longer exists:
-				if (!shopkeeper.isValid()) {
-					invalidShops += 1;
-					continue;
-				}
-
-				// Skip the shopkeeper if it can be hired and the sender cannot remove such shops:
-				if (!canRemoveHireableShops
-						&& shopkeeper instanceof PlayerShopkeeper playerShop
-						&& playerShop.isHireable()) {
-					skippedHireableShops += 1;
-					continue;
-				}
-
-				if (senderPlayer != null) {
-					// Call event:
-					PlayerDeleteShopkeeperEvent deleteEvent = ShopkeeperEventHelper.callPlayerDeleteShopkeeperEvent(
-							shopkeeper,
-							senderPlayer
-					);
-					if (deleteEvent.isCancelled()) {
-						cancelledDeletions += 1;
-						continue;
+				operations.add(registry.runOnOwner((AbstractShopkeeper) shopkeeper, () -> {
+					// Skip the shopkeeper if it no longer exists:
+					if (!shopkeeper.isValid()) {
+						return 0;
 					}
-				}
 
-				shopkeeper.delete(senderPlayer);
-				actualShopCount += 1;
+					// Skip the shopkeeper if it can be hired and the sender cannot remove such shops:
+					if (!canRemoveHireableShops
+							&& shopkeeper instanceof PlayerShopkeeper playerShop
+							&& playerShop.isHireable()) {
+						return 2;
+					}
+
+					if (senderPlayer != null) {
+						// Call event:
+						PlayerDeleteShopkeeperEvent deleteEvent = ShopkeeperEventHelper.callPlayerDeleteShopkeeperEvent(
+								shopkeeper,
+								senderPlayer
+						);
+						if (deleteEvent.isCancelled()) {
+							return 1;
+						}
+					}
+
+					shopkeeper.delete(senderPlayer);
+					return shopkeeper.isValid() ? 4 : 3;
+				}).handle((outcome, error) -> {
+					int index = error == null ? outcome : (!shopkeeper.isValid() ? 0 : 4);
+					counts.incrementAndGet(index);
+					return null;
+				}));
 			}
 
-			// Trigger save:
-			plugin.getShopkeeperStorage().save();
+			CompletableFuture.allOf(operations.toArray(new @NonNull CompletableFuture<?>[0]))
+					.thenRun(() -> registry.runOnSender(sender, () -> {
+					int invalidShops = counts.get(0);
+					int cancelledDeletions = counts.get(1);
+					int skippedHireableShops = counts.get(2);
+					int actualShopCount = counts.get(3);
+					if (counts.get(4) > 0) {
+						sender.sendMessage("Failed to remove " + counts.get(4)
+								+ " shopkeepers. Their owner was unavailable or removal failed.");
+					}
 
-			// Print the result messages:
-			if (invalidShops > 0) {
-				TextUtils.sendMessage(sender, Messages.shopsAlreadyRemoved,
-						"shopsCount", invalidShops
-				);
-			}
-			if (cancelledDeletions > 0) {
-				TextUtils.sendMessage(sender, Messages.shopRemovalsCancelled,
-						"shopsCount", cancelledDeletions
-				);
-			}
-			if (skippedHireableShops > 0) {
-				TextUtils.sendMessage(sender, Messages.hiredShopsNotRemoved,
-						"shopsCount", skippedHireableShops
-				);
-			}
-			if (allAdmin) {
-				// Removed all admin shops:
-				TextUtils.sendMessage(sender, Messages.adminShopsRemoved,
-						"shopsCount", actualShopCount
-				);
-			} else if (allPlayers) {
-				// Removed all player shops:
-				TextUtils.sendMessage(sender, Messages.playerShopsRemoved,
-						"shopsCount", actualShopCount
-				);
-			} else {
-				// Removed all shops of the specified player:
-				TextUtils.sendMessage(sender, Messages.shopsOfPlayerRemoved,
-						"player", TextUtils.getPlayerText(
-								finalTargetPlayerName,
-								finalTargetPlayerUUID
-						),
-						"shopsCount", actualShopCount
-				);
-			}
+					// Trigger save:
+					plugin.getShopkeeperStorage().save();
+
+					// Print the result messages:
+					if (invalidShops > 0) {
+						TextUtils.sendMessage(sender, Messages.shopsAlreadyRemoved.copy(),
+								"shopsCount", invalidShops
+						);
+					}
+					if (cancelledDeletions > 0) {
+						TextUtils.sendMessage(sender, Messages.shopRemovalsCancelled.copy(),
+								"shopsCount", cancelledDeletions
+						);
+					}
+					if (skippedHireableShops > 0) {
+						TextUtils.sendMessage(sender, Messages.hiredShopsNotRemoved.copy(),
+								"shopsCount", skippedHireableShops
+						);
+					}
+					if (allAdmin) {
+						// Removed all admin shops:
+						TextUtils.sendMessage(sender, Messages.adminShopsRemoved.copy(),
+								"shopsCount", actualShopCount
+						);
+					} else if (allPlayers) {
+						// Removed all player shops:
+						TextUtils.sendMessage(sender, Messages.playerShopsRemoved.copy(),
+								"shopsCount", actualShopCount
+						);
+					} else {
+						// Removed all shops of the specified player:
+						TextUtils.sendMessage(sender, Messages.shopsOfPlayerRemoved.copy(),
+								"player", TextUtils.getPlayerText(
+										finalTargetPlayerName,
+										finalTargetPlayerUUID
+								),
+								"shopsCount", actualShopCount
+						);
+					}
+					}));
 		});
 
 		// Inform the sender about required confirmation:

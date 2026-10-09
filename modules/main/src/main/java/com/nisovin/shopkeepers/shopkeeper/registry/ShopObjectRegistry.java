@@ -1,8 +1,8 @@
 package com.nisovin.shopkeepers.shopkeeper.registry;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -23,7 +23,7 @@ public class ShopObjectRegistry {
 	// has been activated.
 	// Since some types of shop objects may handle their spawning themselves, shop objects might
 	// already be spawned before their chunk is activated.
-	private final Map<Object, AbstractShopkeeper> shopkeepersByObjectId = new HashMap<>();
+	private final Map<Object, AbstractShopkeeper> shopkeepersByObjectId = new ConcurrentHashMap<>();
 
 	ShopObjectRegistry() {
 	}
@@ -33,6 +33,10 @@ public class ShopObjectRegistry {
 
 	public void onDisable() {
 		this.ensureEmpty();
+	}
+
+	void discardOnShutdown() {
+		shopkeepersByObjectId.clear();
 	}
 
 	private void ensureEmpty() {
@@ -124,7 +128,7 @@ public class ShopObjectRegistry {
 		Log.debug(DebugOptions.shopkeeperActivation, () -> shopkeeper.getLogPrefix()
 				+ "Unregistering object with id '" + objectId + "'.");
 		assert shopkeepersByObjectId.get(objectId) == shopkeeper;
-		shopkeepersByObjectId.remove(objectId);
+		shopkeepersByObjectId.remove(objectId, shopkeeper);
 		shopObject.setLastId(null);
 	}
 }

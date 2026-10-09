@@ -12,7 +12,6 @@ import org.bukkit.event.player.PlayerStatisticIncrementEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.MerchantInventory;
-import org.bukkit.scheduler.BukkitTask;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import com.nisovin.shopkeepers.api.ShopkeepersPlugin;
@@ -24,9 +23,11 @@ import com.nisovin.shopkeepers.api.ui.UIType;
 import com.nisovin.shopkeepers.config.Settings;
 import com.nisovin.shopkeepers.util.bukkit.EventUtils;
 import com.nisovin.shopkeepers.util.bukkit.MerchantUtils;
+import com.nisovin.shopkeepers.util.bukkit.SchedulerUtils;
 import com.nisovin.shopkeepers.util.inventory.ItemUtils;
 import com.nisovin.shopkeepers.util.java.Validate;
 import com.nisovin.shopkeepers.util.logging.Log;
+import com.tcoded.folialib.wrapper.task.WrappedTask;
 
 /**
  * Tries to accurately detect individual trades handled by Minecraft by listening to corresponding
@@ -51,7 +52,7 @@ public class TradingCountListener implements Listener {
 
 	private @Nullable Player tradingPlayer = null;
 	private int tradeCounter = 0;
-	private @Nullable BukkitTask stopListeningTask = null;
+	private @Nullable WrappedTask stopListeningTask = null;
 
 	public TradingCountListener(ShopkeepersPlugin plugin) {
 		Validate.notNull(plugin, "plugin is null");
@@ -74,7 +75,7 @@ public class TradingCountListener implements Listener {
 		Log.debug("Listening for non-shopkeeper trades of player " + tradingPlayer.getName()
 				+ " ...");
 		this.tradingPlayer = tradingPlayer;
-		stopListeningTask = Bukkit.getScheduler().runTask(plugin, stopListeningAction);
+		stopListeningTask = SchedulerUtils.runTaskOrOmit(tradingPlayer, stopListeningAction);
 	}
 
 	private void stopListeningForTrades() {

@@ -9,7 +9,6 @@ import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
-import org.bukkit.scheduler.BukkitTask;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import com.nisovin.shopkeepers.api.ShopkeepersPlugin;
@@ -29,6 +28,7 @@ import com.nisovin.shopkeepers.util.java.ThrowableUtils;
 import com.nisovin.shopkeepers.util.java.Validate;
 import com.nisovin.shopkeepers.util.java.VoidCallable;
 import com.nisovin.shopkeepers.util.logging.Log;
+import com.tcoded.folialib.wrapper.task.WrappedTask;
 
 /**
  * Base class for {@link TradeLogger}s with a single concurrent writer. Trades are buffered and
@@ -63,7 +63,7 @@ public abstract class AbstractSingleWriterTradeLogger implements TradeLogger {
 
 	private List<TradeRecord> pending = new ArrayList<>();
 	private final SaveTask saveTask;
-	private @Nullable BukkitTask delayedSaveTask = null;
+	private @Nullable WrappedTask delayedSaveTask = null;
 	// This is reset to the current configuration value prior to every save. This ensures that the
 	// value of this setting remains constant during the save and does not differ for the items of
 	// the trades that are being saved as part of the same batch.
@@ -160,8 +160,8 @@ public abstract class AbstractSingleWriterTradeLogger implements TradeLogger {
 	 *            the reason
 	 */
 	protected final void disable(String reason) {
-		if (!SchedulerUtils.isMainThread()) {
-			throw new IllegalStateException("This must be called from the server's main thread!");
+		if (!SchedulerUtils.isGlobalThread()) {
+			throw new IllegalStateException("This must be called from the server's global thread!");
 		}
 
 		Log.severe(logPrefix + "Disabled (trades won't be logged)! Reason: " + reason);
@@ -172,6 +172,11 @@ public abstract class AbstractSingleWriterTradeLogger implements TradeLogger {
 
 	@Override
 	public void logTrade(TradeRecord trade) {
+		if (com.nisovin.shopkeepers.SKShopkeepersPlugin.getInstance().getFoliaLib().isFolia()
+				&& !SchedulerUtils.isGlobalThread()) {
+			SchedulerUtils.runTaskGloballyOrOmit(() -> this.logTrade(trade));
+			return;
+		}
 		if (!enabled) return;
 
 		pending.add(trade);
@@ -209,8 +214,9 @@ public abstract class AbstractSingleWriterTradeLogger implements TradeLogger {
 			return;
 		}
 
-		delayedSaveTask = SchedulerUtils.runTaskLaterOrOmit(
-				plugin,
+		// The actual save is performed asynchronously by the SaveTask. This only schedules the
+		// (global-thread) trigger that starts that save, matching the previous behavior.
+		delayedSaveTask = SchedulerUtils.runTaskLaterGloballyOrOmit(
 				new DelayedSaveTask(),
 				DELAYED_SAVE_TICKS
 		);

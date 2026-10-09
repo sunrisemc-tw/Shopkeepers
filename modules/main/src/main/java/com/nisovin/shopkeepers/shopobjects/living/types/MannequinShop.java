@@ -29,7 +29,6 @@ import com.nisovin.shopkeepers.ui.editor.Button;
 import com.nisovin.shopkeepers.ui.editor.EditorView;
 import com.nisovin.shopkeepers.ui.editor.ShopkeeperActionButton;
 import com.nisovin.shopkeepers.util.bukkit.EntityUtils;
-import com.nisovin.shopkeepers.util.bukkit.SchedulerUtils;
 import com.nisovin.shopkeepers.util.bukkit.TextUtils;
 import com.nisovin.shopkeepers.util.data.property.BasicProperty;
 import com.nisovin.shopkeepers.util.data.property.Property;
@@ -266,6 +265,11 @@ public class MannequinShop extends SKLivingShopObject<LivingEntity> {
 	private Button getProfileEditorButton() {
 		return new ShopkeeperActionButton() {
 			@Override
+			protected boolean requiresShopOwner() {
+				return false;
+			}
+
+			@Override
 			public @Nullable ItemStack getIcon() {
 				return getProfileEditorItem();
 			}
@@ -323,7 +327,6 @@ public class MannequinShop extends SKLivingShopObject<LivingEntity> {
 				// TODO Empty name: Workaround for SPIGOT-8088
 				? Bukkit.createPlayerProfile(uuid, "")
 				: Bukkit.createPlayerProfile(preparedInput);
-		var plugin = SKShopkeepersPlugin.getInstance();
 		profile.update().whenComplete((updatedProfile, e) -> {
 			if (e != null) {
 				// Unexpected: If the lookup "fails", we expect to just get back the incomplete
@@ -332,21 +335,30 @@ public class MannequinShop extends SKLivingShopObject<LivingEntity> {
 				return;
 			}
 
-			SchedulerUtils.runOnMainThreadOrOmit(plugin, () -> {
-				this.updateProfile(player, preparedInput, updatedProfile);
-			});
+			this.updateProfile(player, preparedInput, updatedProfile);
 		});
 	}
 
 	private void updateProfile(Player player, String input, @Nullable PlayerProfile profile) {
+		var registry = SKShopkeepersPlugin.getInstance().getShopkeeperRegistry();
+		if (!registry.isOwnerThread(shopkeeper)) {
+			registry.runOnOwner(shopkeeper, () -> {
+				this.updateProfile(player, input, profile);
+				return true;
+			});
+			return;
+		}
+
 		if (!shopkeeper.isValid()) {
-			TextUtils.sendMessage(player, Messages.mannequinEnterProfileCanceled);
+			registry.runOnSender(player,
+					() -> TextUtils.sendMessage(player, Messages.mannequinEnterProfileCanceled));
 			return;
 		}
 
 		// Validate the profile:
 		if (profile != null && !profile.isComplete()) {
-			TextUtils.sendMessage(player, Messages.mannequinProfileInvalid, "input", input);
+			registry.runOnSender(player,
+					() -> TextUtils.sendMessage(player, Messages.mannequinProfileInvalid, "input", input));
 			return;
 		}
 
@@ -355,10 +367,12 @@ public class MannequinShop extends SKLivingShopObject<LivingEntity> {
 
 		// Inform player:
 		if (profile == null) {
-			TextUtils.sendMessage(player, Messages.mannequinProfileCleared);
+			registry.runOnSender(player,
+					() -> TextUtils.sendMessage(player, Messages.mannequinProfileCleared));
 		} else {
 			var profileName = Unsafe.assertNonNull(profile.getName());
-			TextUtils.sendMessage(player, Messages.mannequinProfileSet, "profileName", profileName);
+			registry.runOnSender(player,
+					() -> TextUtils.sendMessage(player, Messages.mannequinProfileSet, "profileName", profileName));
 		}
 
 		// Call event:

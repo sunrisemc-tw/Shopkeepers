@@ -31,7 +31,11 @@ class CommandReload extends Command {
 		CommandSender sender = input.getSender();
 
 		// Reload plugin:
-		plugin.reload();
-		sender.sendMessage(ChatColor.GREEN + "Shopkeepers plugin reloaded!");
+		plugin.reloadAsync().whenComplete((success, error) -> {
+			plugin.getShopkeeperRegistry().runOnSender(sender, () -> sender.sendMessage(
+					error == null && Boolean.TRUE.equals(success)
+							? ChatColor.GREEN + "Shopkeepers plugin reloaded!"
+							: ChatColor.RED + "Shopkeepers plugin reload failed. Check the server log."));
+		});
 	}
 }

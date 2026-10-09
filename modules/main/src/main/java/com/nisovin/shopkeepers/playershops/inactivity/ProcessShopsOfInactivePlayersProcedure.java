@@ -10,7 +10,6 @@ import java.util.concurrent.TimeUnit;
 
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
-import org.bukkit.scheduler.BukkitRunnable;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import com.nisovin.shopkeepers.SKShopkeepersPlugin;
@@ -108,23 +107,20 @@ class ProcessShopsOfInactivePlayersProcedure {
 
 	private void asyncCheckInactivityOfAllShopOwnersAndContinue() {
 		// We retrieve the OfflinePlayers and their 'last played' times asynchronously:
-		new BukkitRunnable() {
-			@Override
-			public void run() {
-				// Set up the data for all inactive shop owners, and remove all shop owners that are
-				// not inactive:
-				setUpInactiveShopOwners();
+		SchedulerUtils.runAsyncTaskOrOmit(() -> {
+			// Set up the data for all inactive shop owners, and remove all shop owners that are
+			// not inactive:
+			setUpInactiveShopOwners();
 
-				// Abort if no inactive players were found:
-				if (inactivePlayers.isEmpty()) return;
+			// Abort if no inactive players were found:
+			if (inactivePlayers.isEmpty()) return;
 
-				// Abort if the task has been cancelled in the meantime (e.g. if the plugin has been
-				// disabled or reloaded):
-				if (this.isCancelled()) return;
+			// Abort if the plugin has been disabled or reloaded in the meantime:
+			if (!plugin.isEnabled()) return;
 
-				SchedulerUtils.runTaskOrOmit(plugin, () -> continueWithInactiveShopOwners());
-			}
-		}.runTaskAsynchronously(plugin);
+			// Continue on the global thread (this touches shopkeepers across all worlds):
+			SchedulerUtils.runTaskGloballyOrOmit(() -> continueWithInactiveShopOwners());
+		});
 	}
 
 	// This may be called asynchronously.
@@ -168,7 +164,7 @@ class ProcessShopsOfInactivePlayersProcedure {
 	}
 
 	private void continueWithInactiveShopOwners() {
-		assert Bukkit.isPrimaryThread();
+		assert SchedulerUtils.isGlobalThread();
 		assert !inactivePlayers.isEmpty();
 		assert !CollectionUtils.containsNull(inactivePlayers.values());
 
@@ -222,14 +218,17 @@ class ProcessShopsOfInactivePlayersProcedure {
 			}
 
 			// Process the shopkeepers:
-			shopkeepers.forEach(playerShop -> {
+			// Each shop's for-hire restore or deletion is dispatched onto its owning region. On
+			// non-Folia servers this runs inline on the primary thread, preserving the original
+			// behavior.
+			shopkeepers.forEach(playerShop -> shopkeeperRegistry.runOnOwner(playerShop, () -> {
 				if (!playerShop.isValid()) {
 					// The shopkeeper has already been removed in the meantime.
 					Log.debug(() -> playerShop.getUniqueIdLogPrefix()
 							+ "Processing due to inactivity of owner " + playerShop.getOwnerString()
 							+ " (last seen " + inactivePlayerData.getLastSeenDaysAgo()
 							+ " days ago)" + " skipped: The shopkeeper has already been removed.");
-					return;
+					return true;
 				}
 
 				// Restore hired shops to their for-hire state instead of deleting them.
@@ -238,7 +237,7 @@ class ProcessShopsOfInactivePlayersProcedure {
 				if (playerShop.isHireable()) {
 					// Skip if already for hire:
 					if (playerShop.isForHire()) {
-						return;
+						return true;
 					}
 
 					Log.info(playerShop.getUniqueIdLogPrefix()
@@ -246,14 +245,15 @@ class ProcessShopsOfInactivePlayersProcedure {
 							+ playerShop.getOwnerString() + " (last seen "
 							+ inactivePlayerData.getLastSeenDaysAgo() + " days ago).");
 					playerShop.setForHire();
-					return;
+					return true;
 				}
 
 				Log.info(playerShop.getUniqueIdLogPrefix() + "Deletion due to inactivity of owner "
 						+ playerShop.getOwnerString() + " (last seen "
 						+ inactivePlayerData.getLastSeenDaysAgo() + " days ago).");
 				playerShop.delete();
-			});
+				return true;
+			}));
 		});
 
 		// Save if necessary:

@@ -2,13 +2,14 @@ package com.nisovin.shopkeepers.shopkeeper.spawning;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 import org.bukkit.Bukkit;
+import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.event.HandlerList;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -25,6 +26,7 @@ import com.nisovin.shopkeepers.shopkeeper.registry.SKShopkeeperRegistry;
 import com.nisovin.shopkeepers.shopkeeper.spawning.ShopkeeperSpawnState.State;
 import com.nisovin.shopkeepers.shopobjects.AbstractShopObject;
 import com.nisovin.shopkeepers.shopobjects.AbstractShopObjectType;
+import com.nisovin.shopkeepers.util.bukkit.SchedulerUtils;
 import com.nisovin.shopkeepers.util.bukkit.TextUtils;
 import com.nisovin.shopkeepers.util.java.Validate;
 import com.nisovin.shopkeepers.util.logging.Log;
@@ -68,7 +70,17 @@ public class ShopkeeperSpawner {
 	// entry whenever a world is saved, even if the world does not contain any shopkeepers yet.
 	// World entries are removed again once the world has been unloaded and the last shopkeeper has
 	// been removed.
-	private final Map<String, WorldData> worlds = new HashMap<>();
+	private final Map<String, WorldData> worlds = new ConcurrentHashMap<>();
+	private volatile boolean stopped;
+	private volatile long generation;
+
+	boolean isRunning() {
+		return !stopped && plugin.isEnabled();
+	}
+
+	boolean isCurrentWorldData(WorldData data) {
+		return this.isRunning() && worlds.get(data.getWorldName()) == data;
+	}
 
 	public ShopkeeperSpawner(SKShopkeepersPlugin plugin, SKShopkeeperRegistry shopkeeperRegistry) {
 		Validate.notNull(plugin, "plugin is null");
@@ -91,23 +103,30 @@ public class ShopkeeperSpawner {
 	}
 
 	public void onEnable() {
+		stopped = false;
+		generation++;
 		// Start the spawn queue:
 		spawnQueue.start();
 
 		Bukkit.getPluginManager().registerEvents(listener, plugin);
 
-		Bukkit.getScheduler().runTaskLater(plugin, new CheckUnspawnableShopkeepersTask(), 5L);
+		// This checks shopkeepers across all worlds, so it runs on the global thread:
+		SchedulerUtils.runTaskLaterGloballyOrOmit(new CheckUnspawnableShopkeepersTask(), 5L);
 	}
 
 	private class CheckUnspawnableShopkeepersTask implements Runnable {
+		private final long expectedGeneration = generation;
 		@Override
 		public void run() {
+			if (stopped || expectedGeneration != generation) return;
 			// Check for shopkeepers that failed to spawn during their last spawn attempt:
 			checkUnspawnableShopkeepers(Settings.deleteUnspawnableShopkeepers, false);
 		}
 	}
 
 	public void onDisable() {
+		stopped = true;
+		generation++;
 		HandlerList.unregisterAll(listener);
 
 		// Shutdown the spawn queue:
@@ -212,6 +231,19 @@ public class ShopkeeperSpawner {
 	// SHOPKEEPER SPAWNING
 
 	public void spawnShopkeeperImmediately(AbstractShopkeeper shopkeeper) {
+		if (stopped) return;
+		if (plugin.getFoliaLib().isFolia()) {
+			if (!shopkeeperRegistry.isOwnerThread(shopkeeper)) {
+				shopkeeperRegistry.runOnOwner(shopkeeper, () -> {
+					if (shopkeeper.isValid() && shopkeeper.isActive()) {
+						this.spawnShopkeeperImmediately(shopkeeper);
+					}
+
+					return true;
+				});
+				return;
+			}
+		}
 		// In order to not have players wait for newly created shopkeepers, teleported shopkeepers,
 		// or loaded shopkeepers after plugin/storage reloads, we don't use the spawn queue in those
 		// cases, but spawn the shopkeeper immediately.
@@ -331,6 +363,15 @@ public class ShopkeeperSpawner {
 	// marked as valid.
 	public void despawnShopkeeper(AbstractShopkeeper shopkeeper) {
 		Validate.notNull(shopkeeper, "shopkeeper is null");
+		if (plugin.getFoliaLib().isFolia()
+				&& !shopkeeperRegistry.isOwnerThread(shopkeeper)) {
+			shopkeeperRegistry.runOnOwner(shopkeeper, () -> {
+				if (shopkeeper.isValid()) this.despawnShopkeeper(shopkeeper);
+				return true;
+			});
+			return;
+		}
+
 		Validate.isTrue(shopkeeper.isValid(), "shopkeeper is invalid");
 
 		// Ignore shop objects that handle their spawning themselves:
@@ -384,6 +425,8 @@ public class ShopkeeperSpawner {
 	// Returns true on success.
 	private boolean doSpawnShopkeeper(AbstractShopkeeper shopkeeper) {
 		assert shopkeeper != null;
+		if (stopped || !shopkeeper.isValid() || !shopkeeper.isActive()) return false;
+		assert shopkeeperRegistry.isOwnerThread(shopkeeper);
 		AbstractShopObject shopObject = shopkeeper.getShopObject();
 		AbstractShopObjectType<?> shopObjectType = shopObject.getType();
 		assert shopObjectType.mustBeSpawned();
@@ -481,6 +524,22 @@ public class ShopkeeperSpawner {
 			boolean spawnImmediately
 	) {
 		assert chunkCoords != null && spawnReason != null && shopkeepers != null && filter != null;
+		if (plugin.getFoliaLib().isFolia()) {
+			long expectedGeneration = generation;
+			shopkeepers.forEach(shopkeeper -> shopkeeperRegistry.runOnOwner(shopkeeper, () -> {
+				if (!stopped && generation == expectedGeneration && shopkeeper.isValid()
+						&& shopkeeper.isActive() && shopkeeperRegistry.isChunkActive(chunkCoords)
+						&& chunkCoords.equals(shopkeeper.getLastChunkCoords())
+						&& filter.test(shopkeeper)) {
+					this.spawnShopkeeper(shopkeeper, spawnImmediately);
+					if (shopkeeper.isDirty()) plugin.getShopkeeperStorage().saveDelayed();
+				}
+
+				return true;
+			}));
+			return;
+		}
+
 		if (shopkeepers.isEmpty()) return;
 		if (!shopkeeperRegistry.isChunkActive(chunkCoords)) return;
 
@@ -597,6 +656,22 @@ public class ShopkeeperSpawner {
 			@Nullable Consumer<? super AbstractShopkeeper> onDespawned
 	) {
 		assert chunkCoords != null && despawnReason != null && shopkeepers != null && filter != null;
+		if (plugin.getFoliaLib().isFolia()) {
+			long expectedGeneration = generation;
+			shopkeepers.forEach(shopkeeper -> shopkeeperRegistry.runOnOwner(shopkeeper, () -> {
+				if (!stopped && generation == expectedGeneration && shopkeeper.isValid()
+						&& chunkCoords.equals(shopkeeper.getLastChunkCoords())
+						&& filter.test(shopkeeper)) {
+					this.despawnShopkeeper(shopkeeper);
+					if (onDespawned != null) onDespawned.accept(shopkeeper);
+					if (shopkeeper.isDirty()) plugin.getShopkeeperStorage().saveDelayed();
+				}
+
+				return true;
+			}));
+			return;
+		}
+
 		if (shopkeepers.isEmpty()) return;
 
 		Log.debug(DebugOptions.shopkeeperActivation,
@@ -698,6 +773,11 @@ public class ShopkeeperSpawner {
 		// The shopkeeper chunk map can change while we iterate over these chunks. We therefore need
 		// to create a snapshot of these chunks first.
 		List<? extends ChunkCoords> chunks = new ArrayList<>(shopkeeperRegistry.getShopkeepersByChunks(worldName).keySet());
+		if (plugin.getFoliaLib().isFolia()) {
+			chunks.forEach(coords -> this.spawnChunkShopkeepers(
+					coords, spawnReason, shopkeeperFilter, spawnImmediately));
+			return;
+		}
 
 		// Mark all shopkeepers as 'spawning' up front, so that we can detect and account for spawn
 		// state changes that happen in the meantime:
@@ -753,6 +833,11 @@ public class ShopkeeperSpawner {
 		List<? extends ChunkCoords> chunks = new ArrayList<>(
 				shopkeeperRegistry.getShopkeepersByChunks(worldName).keySet()
 		);
+		if (plugin.getFoliaLib().isFolia()) {
+			chunks.forEach(coords -> this.despawnChunkShopkeepers(
+					coords, despawnReason, shopkeeperFilter, onDespawned));
+			return;
+		}
 
 		// Mark all shopkeepers as 'despawning' up front, so that we can detect and account for
 		// spawn state changes that happen in the meantime:
@@ -829,7 +914,18 @@ public class ShopkeeperSpawner {
 			if (deleteUnspawnableShopkeepers) {
 				// Delete those shopkeepers:
 				for (Shopkeeper shopkeeper : unspawnableShopkeepers) {
-					shopkeeper.delete();
+					if (plugin.getFoliaLib().isFolia()) {
+						shopkeeperRegistry.runOnOwner((AbstractShopkeeper) shopkeeper, () -> {
+							if (shopkeeper.isValid()
+									&& ((AbstractShopkeeper) shopkeeper).getShopObject().isLastSpawnFailed()) {
+								shopkeeper.delete();
+							}
+
+							return true;
+						});
+					} else {
+						shopkeeper.delete();
+					}
 				}
 
 				// Save:

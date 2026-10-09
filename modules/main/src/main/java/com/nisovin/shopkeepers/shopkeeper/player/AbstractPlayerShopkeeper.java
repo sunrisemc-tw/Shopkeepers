@@ -403,6 +403,26 @@ public abstract class AbstractPlayerShopkeeper
 
 	@Override
 	public void delete(@Nullable Player player) {
+		var plugin = SKShopkeepersPlugin.getInstance();
+		if (plugin.getFoliaLib().isFolia() && player != null) {
+			boolean returnItem = Settings.deletingPlayerShopReturnsCreationItem
+					&& this.hasAccessLevel(player, DefaultPlayerShopAccessLevels.FULL());
+			super.delete(player);
+			if (returnItem && !this.isValid()) {
+				plugin.getShopkeeperRegistry().runOnSender(player, () -> {
+					ItemStack item = ShopCreationItem.create();
+					Map<Integer, ItemStack> remaining = player.getInventory().addItem(item);
+					if (!remaining.isEmpty()) {
+						Location dropLocation = player.getEyeLocation();
+						World world = Unsafe.assertNonNull(dropLocation.getWorld());
+						remaining.values().forEach(leftover -> world.dropItem(dropLocation, leftover));
+					}
+				});
+			}
+
+			return;
+		}
+
 		// Return the shop creation item:
 		if (Settings.deletingPlayerShopReturnsCreationItem
 				&& player != null
@@ -451,11 +471,25 @@ public abstract class AbstractPlayerShopkeeper
 				String newName = ItemUtils.getDisplayNameOrEmpty(itemInMainHand);
 
 				ShopkeeperNaming shopkeeperNaming = SKShopkeepersPlugin.getInstance().getShopkeeperNaming();
-				if (shopkeeperNaming.requestNameChange(player, this, newName)) {
-					// Remove the naming item from player's hand:
-					ItemStack newItemInMainHand = ItemUtils.decreaseItemAmount(itemInMainHand, 1);
-					playerInventory.setItemInMainHand(newItemInMainHand);
+				var registry = SKShopkeepersPlugin.getInstance().getShopkeeperRegistry();
+				if (SKShopkeepersPlugin.getInstance().getFoliaLib().isFolia()) {
+					ItemStack namingItem = ItemUtils.copySingleItem(itemInMainHand);
+					playerInventory.setItemInMainHand(ItemUtils.decreaseItemAmount(itemInMainHand, 1));
+					shopkeeperNaming.requestNameChangeAsync(player, this, newName)
+							.whenComplete((success, error) -> {
+								if (error == null && Boolean.TRUE.equals(success)) return;
+								registry.runOnSender(player, () -> {
+									Map<Integer, ItemStack> remaining =
+											player.getInventory().addItem(namingItem);
+									Location drop = player.getEyeLocation();
+									World world = Unsafe.assertNonNull(drop.getWorld());
+									remaining.values().forEach(item -> world.dropItem(drop, item));
+								});
+							});
+				} else if (shopkeeperNaming.requestNameChange(player, this, newName)) {
+					playerInventory.setItemInMainHand(ItemUtils.decreaseItemAmount(itemInMainHand, 1));
 				}
+
 				return;
 			}
 		}
@@ -988,7 +1022,7 @@ public abstract class AbstractPlayerShopkeeper
 			// state or hire cost item:
 			// TODO Send a feedback message to players?
 			UISessionManager.getInstance()
-					.abortUISessionsForContextDelayed(this, DefaultUITypes.HIRING());
+					.abortUISessionsForContextDelayed(this.getLocation(), this, DefaultUITypes.HIRING());
 		}
 	}
 

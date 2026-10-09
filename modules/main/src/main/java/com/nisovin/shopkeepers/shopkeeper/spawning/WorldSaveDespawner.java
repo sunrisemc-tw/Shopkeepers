@@ -2,9 +2,7 @@ package com.nisovin.shopkeepers.shopkeeper.spawning;
 
 import java.util.function.Predicate;
 
-import org.bukkit.Bukkit;
 import org.bukkit.World;
-import org.bukkit.scheduler.BukkitTask;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import com.nisovin.shopkeepers.SKShopkeepersPlugin;
@@ -13,8 +11,10 @@ import com.nisovin.shopkeepers.shopkeeper.AbstractShopkeeper;
 import com.nisovin.shopkeepers.shopkeeper.registry.SKShopkeeperRegistry;
 import com.nisovin.shopkeepers.shopkeeper.spawning.ShopkeeperSpawnState.State;
 import com.nisovin.shopkeepers.shopobjects.AbstractShopObjectType;
+import com.nisovin.shopkeepers.util.bukkit.SchedulerUtils;
 import com.nisovin.shopkeepers.util.java.Validate;
 import com.nisovin.shopkeepers.util.logging.Log;
+import com.tcoded.folialib.wrapper.task.WrappedTask;
 
 /**
  * Handles the temporary despawning and later respawning of shop objects that need to be despawned
@@ -61,6 +61,7 @@ class WorldSaveDespawner {
 
 	void onWorldSave(World world) {
 		assert world != null;
+		if (!spawner.isRunning()) return;
 		String worldName = world.getName();
 		// Note: Shopkeepers can be added to the world while the world is being saved. To track
 		// whether the world is currently being saved, we start the respawn task even if the world
@@ -78,7 +79,9 @@ class WorldSaveDespawner {
 		// Set up the world save respawn task:
 		// This is done prior to the despawning of shopkeepers, because the presence of this task is
 		// also used to indicate that the world is currently being saved.
-		new RespawnShopkeepersAfterWorldSaveTask(worldData).start();
+		RespawnShopkeepersAfterWorldSaveTask respawn =
+				new RespawnShopkeepersAfterWorldSaveTask(worldData);
+		if (!respawn.start()) return;
 
 		// Note: The chunks stays marked as active during the temporary despawning of the
 		// shopkeepers.
@@ -91,7 +94,8 @@ class WorldSaveDespawner {
 		spawner.despawnShopkeepersInWorld(
 				worldName,
 				"world saving",
-				IS_DESPAWNED_DURING_WORLD_SAVE,
+				shopkeeper -> worldData.isWorldSaveRespawnTask(respawn)
+						&& IS_DESPAWNED_DURING_WORLD_SAVE.test(shopkeeper),
 				this::setPendingWorldSaveRespawn
 		);
 	}
@@ -105,23 +109,31 @@ class WorldSaveDespawner {
 	class RespawnShopkeepersAfterWorldSaveTask implements Runnable {
 
 		private final WorldData worldData;
-		private @Nullable BukkitTask task;
+		private volatile @Nullable WrappedTask task;
+		private volatile boolean cancelled;
 
 		RespawnShopkeepersAfterWorldSaveTask(WorldData worldData) {
 			assert worldData != null;
 			this.worldData = worldData;
 		}
 
-		void start() {
-			assert !worldData.isWorldSaveRespawnPending();
-			this.task = Bukkit.getScheduler().runTask(plugin, this);
-			worldData.setWorldSaveRespawnTask(this);
+		boolean start() {
+			if (!worldData.replaceWorldSaveRespawnTask(null, this)) return false;
+			// This respawns shopkeepers across the whole world, so it runs on the global thread:
+			this.task = SchedulerUtils.runTaskGloballyOrOmit(this);
+			if (task == null) {
+				worldData.replaceWorldSaveRespawnTask(this, null);
+				return false;
+			}
+
+			return true;
 		}
 
 		@Override
 		public void run() {
 			// Assert: World is still loaded (the task is cancelled on world unload).
-			worldData.setWorldSaveRespawnTask(null);
+			if (cancelled || !spawner.isCurrentWorldData(worldData)
+					|| !worldData.replaceWorldSaveRespawnTask(this, null)) return;
 
 			// In order to not have players wait for shopkeepers to respawn after world saves, we
 			// respawn the shopkeepers immediately in this case:
@@ -134,11 +146,13 @@ class WorldSaveDespawner {
 		}
 
 		public void cancel() {
-			if (task != null) {
-				task.cancel();
-				task = null;
-				worldData.setWorldSaveRespawnTask(null);
-				this.onCancelled();
+			cancelled = true;
+			worldData.replaceWorldSaveRespawnTask(this, null);
+			@Nullable WrappedTask pending = task;
+			task = null;
+			if (pending != null) {
+				pending.cancel();
+				if (!plugin.getFoliaLib().isFolia()) this.onCancelled();
 			}
 		}
 

@@ -70,6 +70,11 @@ public interface ShopkeeperStorage {
 	 * Saves the data of all shopkeepers immediately, in a blocking (synchronous) fashion.
 	 * <p>
 	 * If another save is already in progress, this will wait for the current save to complete.
+	 * <p>
+	 * On Folia, this waits for the storage writer but does not block while other regions capture
+	 * their current shopkeeper data. Pending owner captures retain the last captured record and
+	 * are saved later. Therefore, return from this method does not guarantee that every region's
+	 * latest changes have reached disk.
 	 */
 	public void saveImmediate();
 

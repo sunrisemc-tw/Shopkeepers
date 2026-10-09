@@ -1,10 +1,10 @@
 package com.nisovin.shopkeepers.shopkeeper.activation;
 
-import org.bukkit.scheduler.BukkitTask;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import com.nisovin.shopkeepers.api.util.ChunkCoords;
 import com.nisovin.shopkeepers.util.java.Validate;
+import com.tcoded.folialib.wrapper.task.WrappedTask;
 
 final class ChunkData {
 
@@ -12,17 +12,21 @@ final class ChunkData {
 	// This flag differs from the chunk's current activation state during the processing of a
 	// request to de-/activate a chunk and its actual de-/activation. It does NOT indicate a pending
 	// delayed activation.
-	private boolean shouldBeActive;
-	private boolean active;
+	private volatile boolean shouldBeActive;
+	private volatile boolean active;
 	// TODO Use one task (or a small number of tasks) for all pending delayed chunk activations,
 	// instead of one task per chunk?
-	private @Nullable BukkitTask delayedActivationTask = null;
+	private volatile @Nullable WrappedTask delayedActivationTask = null;
 
 	ChunkData(ChunkCoords chunkCoords) {
+		this(chunkCoords, chunkCoords.isChunkLoaded());
+	}
+
+	ChunkData(ChunkCoords chunkCoords, boolean active) {
 		Validate.notNull(chunkCoords, "chunkCoords is null");
 		this.chunkCoords = chunkCoords;
 		// The chunk entry is initialized as active if the chunk is currently loaded:
-		this.setActive(chunkCoords.isChunkLoaded());
+		this.setActive(active);
 	}
 
 	public ChunkCoords getChunkCoords() {
@@ -50,15 +54,18 @@ final class ChunkData {
 		return (delayedActivationTask != null);
 	}
 
-	void setDelayedActivationTask(@Nullable BukkitTask delayedActivationTask) {
+	void setDelayedActivationTask(@Nullable WrappedTask delayedActivationTask) {
 		this.delayedActivationTask = delayedActivationTask;
 	}
 
+	boolean isDelayedActivationTask(WrappedTask task) {
+		return delayedActivationTask == task;
+	}
+
 	void cancelDelayedActivation() {
-		if (delayedActivationTask != null) {
-			delayedActivationTask.cancel();
-			delayedActivationTask = null;
-		}
+		@Nullable WrappedTask task = delayedActivationTask;
+		delayedActivationTask = null;
+		if (task != null) task.cancel();
 	}
 
 	// Checks if the chunk is loaded, but not yet active or pending activation:

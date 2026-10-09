@@ -1,10 +1,13 @@
 package com.nisovin.shopkeepers;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 
@@ -15,7 +18,10 @@ import org.bukkit.event.HandlerList;
 import org.bukkit.plugin.PluginManager;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.checkerframework.checker.nullness.qual.NonNull;
 
+import com.nisovin.shopkeepers.util.bukkit.WrappedExecutor;
+import com.tcoded.folialib.FoliaLib;
 import com.nisovin.shopkeepers.api.events.ShopkeepersStartupEvent;
 import com.nisovin.shopkeepers.api.internal.ApiInternals;
 import com.nisovin.shopkeepers.api.internal.InternalShopkeepersAPI;
@@ -96,6 +102,7 @@ public class SKShopkeepersPlugin extends JavaPlugin implements InternalShopkeepe
 	private static final int ASYNC_TASKS_TIMEOUT_SECONDS = 10;
 
 	private static @Nullable SKShopkeepersPlugin plugin;
+	private @Nullable CompletableFuture<Boolean> reloadOperation;
 
 	public static boolean isPluginEnabled() {
 		return (plugin != null);
@@ -106,8 +113,9 @@ public class SKShopkeepersPlugin extends JavaPlugin implements InternalShopkeepe
 	}
 
 	// Utilities:
-	private final Executor syncExecutor = SchedulerUtils.createSyncExecutor(Unsafe.initialized(this));
-	private final Executor asyncExecutor = SchedulerUtils.createAsyncExecutor(Unsafe.initialized(this));
+	private final FoliaLib foliaLib = new FoliaLib(Unsafe.initialized(this));
+	private final WrappedExecutor syncExecutor = SchedulerUtils.createSyncExecutor();
+	private final Executor asyncExecutor = SchedulerUtils.createAsyncExecutor();
 
 	private final ForcingEntitySpawner forcingEntitySpawner = new ForcingEntitySpawner(Unsafe.initialized(this));
 	private final ForcingEntityTeleporter forcingEntityTeleporter = new ForcingEntityTeleporter(Unsafe.initialized(this));
@@ -495,19 +503,26 @@ public class SKShopkeepersPlugin extends JavaPlugin implements InternalShopkeepe
 
 	@Override
 	public void onDisable() {
-		// Wait for async tasks to complete:
-		SchedulerUtils.awaitAsyncTasksCompletion(
-				this,
-				ASYNC_TASKS_TIMEOUT_SECONDS,
-				this.getLogger()
-		);
+		// On non-Folia servers, wait for async tasks to complete before we start disabling. On Folia,
+		// the active-task count also includes still-scheduled region and global tasks, so we instead
+		// wait after cancelling all tasks (see below).
+		if (!foliaLib.isFolia()) {
+			// Wait for async tasks to complete:
+			SchedulerUtils.awaitAsyncTasksCompletion(
+					this,
+					ASYNC_TASKS_TIMEOUT_SECONDS,
+					this.getLogger()
+			);
+		}
 
 		// Disable UI system:
 		uiSystem.onDisable();
 
 		// Deactivate (despawn) all shopkeepers (prior to saving shopkeepers data and before
 		// unloading all shopkeepers):
-		shopkeeperRegistry.getChunkActivator().deactivateShopkeepersInAllWorlds();
+		if (!foliaLib.isFolia()) {
+			shopkeeperRegistry.getChunkActivator().deactivateShopkeepersInAllWorlds();
+		}
 
 		// Disable block shops:
 		blockShops.onDisable();
@@ -585,9 +600,19 @@ public class SKShopkeepersPlugin extends JavaPlugin implements InternalShopkeepe
 		}
 
 		HandlerList.unregisterAll(this);
-		Bukkit.getScheduler().cancelTasks(this);
+		foliaLib.getScheduler().cancelAllTasks();
 
 		InternalShopkeepersAPI.disable();
+
+		if (foliaLib.isFolia()) {
+			// Wait for any still-running async tasks to complete (after cancelling all tasks above):
+			SchedulerUtils.awaitAsyncTasksCompletion(
+					this,
+					ASYNC_TASKS_TIMEOUT_SECONDS,
+					this.getLogger()
+			);
+		}
+
 		plugin = null;
 	}
 
@@ -595,8 +620,80 @@ public class SKShopkeepersPlugin extends JavaPlugin implements InternalShopkeepe
 	 * Reloads the plugin.
 	 */
 	public void reload() {
+		if (foliaLib.isFolia()) {
+			this.reloadAsync().whenComplete((success, error) -> {
+				if (error != null || !Boolean.TRUE.equals(success)) {
+					Log.warning("Shopkeepers reload did not complete.");
+				}
+			});
+			return;
+		}
+
 		this.onDisable();
 		this.onEnable();
+	}
+
+	public synchronized CompletableFuture<Boolean> reloadAsync() {
+		if (!foliaLib.isFolia()) {
+			this.reload();
+			return CompletableFuture.completedFuture(this.isEnabled());
+		}
+
+		@Nullable CompletableFuture<Boolean> previous = reloadOperation;
+		if (previous != null && !previous.isDone()) return previous.copy();
+		CompletableFuture<Boolean> result = new CompletableFuture<>();
+		reloadOperation = result;
+		List<CompletableFuture<Boolean>> closedViews = new ArrayList<>();
+		for (var view : com.nisovin.shopkeepers.ui.lib.UISessionManager.getInstance().getUISessions()) {
+			CompletableFuture<Boolean> closed = new CompletableFuture<>();
+			closedViews.add(closed);
+			try {
+				if (foliaLib.getScheduler().runAtEntityLater(view.getPlayer(), () -> {
+					try {
+						view.close();
+						closed.complete(true);
+					} catch (Throwable error) {
+						closed.completeExceptionally(error);
+					}
+				}, () -> closed.completeExceptionally(
+						new IllegalStateException("Editor player retired during reload.")), 1L) == null) {
+					closed.completeExceptionally(new IllegalStateException("Editor owner unavailable."));
+				}
+			} catch (RuntimeException error) {
+				closed.completeExceptionally(error);
+			}
+		}
+
+		CompletableFuture.allOf(closedViews.toArray(new @NonNull CompletableFuture<?>[0]))
+				.thenCompose(value -> shopkeeperRegistry.awaitOwnerOperations())
+				.thenCompose(value -> shopkeeperRegistry.unloadAllShopkeepersAsync())
+				.whenComplete((value, error) -> {
+					if (error != null) {
+						result.completeExceptionally(error);
+						return;
+					}
+
+					if (SchedulerUtils.runTaskGloballyOrOmit(() -> {
+						if (!this.isEnabled()) {
+							result.complete(false);
+							return;
+						}
+
+						try {
+							this.onDisable();
+							this.onEnable();
+							shopkeeperRegistry.awaitOwnerOperations().whenComplete((ready, failure) -> {
+								if (failure != null) result.completeExceptionally(failure);
+								else result.complete(this.isEnabled());
+							});
+						} catch (Throwable failure) {
+							result.completeExceptionally(failure);
+						}
+					}) == null) {
+						result.complete(false);
+					}
+				});
+		return result.copy();
 	}
 
 	// PLAYER JOINING AND QUITTING
@@ -620,7 +717,11 @@ public class SKShopkeepersPlugin extends JavaPlugin implements InternalShopkeepe
 
 	// UTILITIES
 
-	public Executor getSyncExecutor() {
+	public FoliaLib getFoliaLib() {
+		return foliaLib;
+	}
+
+	public WrappedExecutor getSyncExecutor() {
 		return syncExecutor;
 	}
 

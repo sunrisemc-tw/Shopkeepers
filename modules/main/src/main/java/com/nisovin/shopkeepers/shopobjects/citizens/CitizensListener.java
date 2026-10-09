@@ -11,14 +11,15 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.scheduler.BukkitTask;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import com.nisovin.shopkeepers.api.ShopkeepersPlugin;
 import com.nisovin.shopkeepers.api.internal.util.Unsafe;
 import com.nisovin.shopkeepers.api.shopkeeper.Shopkeeper;
 import com.nisovin.shopkeepers.debug.DebugOptions;
+import com.nisovin.shopkeepers.util.bukkit.SchedulerUtils;
 import com.nisovin.shopkeepers.util.logging.Log;
+import com.tcoded.folialib.wrapper.task.WrappedTask;
 
 import net.citizensnpcs.api.event.CitizensReloadEvent;
 import net.citizensnpcs.api.event.NPCAddTraitEvent;
@@ -60,7 +61,7 @@ class CitizensListener implements Listener {
 		private @Nullable CitizensShopkeeperTrait pendingTrait = null;
 		// The task which handles the pending trait if we don't end up handling it within the
 		// current tick:
-		private @Nullable BukkitTask pendingTraitTask = null;
+		private @Nullable WrappedTask pendingTraitTask = null;
 
 		PendingTraitState(ShopkeepersPlugin plugin) {
 			assert plugin != null;
@@ -138,7 +139,7 @@ class CitizensListener implements Listener {
 				// just in case.
 				assert pendingTraitTask == null;
 				if (pendingTraitTask == null || Unsafe.assertNonNull(pendingTraitTask).isCancelled()) {
-					pendingTraitTask = Bukkit.getScheduler().runTaskLater(plugin, () -> {
+					pendingTraitTask = SchedulerUtils.runTaskLaterGloballyOrOmit(() -> {
 						pendingTraitTask = null; // Reset
 						reset(); // Handles any currently pending trait
 					}, 1L);

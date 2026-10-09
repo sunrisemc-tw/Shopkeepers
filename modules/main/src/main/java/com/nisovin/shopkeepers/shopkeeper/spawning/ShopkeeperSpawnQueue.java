@@ -2,11 +2,14 @@ package com.nisovin.shopkeepers.shopkeeper.spawning;
 
 import java.util.function.Consumer;
 
+import org.bukkit.Location;
 import org.bukkit.plugin.Plugin;
 
+import com.nisovin.shopkeepers.SKShopkeepersPlugin;
 import com.nisovin.shopkeepers.shopkeeper.AbstractShopkeeper;
 import com.nisovin.shopkeepers.shopkeeper.spawning.ShopkeeperSpawnState.State;
 import com.nisovin.shopkeepers.shopobjects.AbstractShopObject;
+import com.nisovin.shopkeepers.util.bukkit.SchedulerUtils;
 import com.nisovin.shopkeepers.util.java.Validate;
 import com.nisovin.shopkeepers.util.taskqueue.TaskQueue;
 
@@ -91,10 +94,34 @@ public class ShopkeeperSpawnQueue extends TaskQueue<AbstractShopkeeper> {
 
 	@Override
 	protected void process(AbstractShopkeeper shopkeeper) {
-		// Reset the shopkeeper's 'queued' state:
-		this.resetQueued(shopkeeper);
+		// On Folia, the shopkeeper is spawned on the thread that owns its region. On other servers we
+		// keep spawning it synchronously within the queue's task execution, preserving the previous
+		// behavior and the queue's load-balancing semantics.
+		if (SKShopkeepersPlugin.getInstance().getFoliaLib().isFolia()) {
+			Location location = shopkeeper.getLocation();
+			if (location == null) return;
+			SchedulerUtils.runTaskOrOmit(location, () -> {
+				ShopkeeperSpawnState state = shopkeeper.getComponents().getOrAdd(ShopkeeperSpawnState.class);
+				if (!shopkeeper.isValid() || !shopkeeper.isActive()
+						|| state.getState() != State.QUEUED) return;
+				Location currentLocation = shopkeeper.getLocation();
+				if (currentLocation == null) return;
+				if (!SchedulerUtils.isMainThread(currentLocation)) {
+					this.process(shopkeeper);
+					return;
+				}
+				// Reset the shopkeeper's 'queued' state:
+				this.resetQueued(shopkeeper);
 
-		// Spawn the shopkeeper:
-		spawner.accept(shopkeeper);
+				// Spawn the shopkeeper:
+				spawner.accept(shopkeeper);
+			});
+		} else {
+			// Reset the shopkeeper's 'queued' state:
+			this.resetQueued(shopkeeper);
+
+			// Spawn the shopkeeper:
+			spawner.accept(shopkeeper);
+		}
 	}
 }

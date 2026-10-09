@@ -12,13 +12,18 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.Location;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
-import org.bukkit.scheduler.BukkitTask;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -27,6 +32,7 @@ import com.nisovin.shopkeepers.api.ShopkeepersPlugin;
 import com.nisovin.shopkeepers.api.internal.util.Unsafe;
 import com.nisovin.shopkeepers.api.shopkeeper.Shopkeeper;
 import com.nisovin.shopkeepers.api.shopkeeper.ShopkeeperRegistry;
+import com.nisovin.shopkeepers.api.shopobjects.entity.EntityShopObject;
 import com.nisovin.shopkeepers.api.storage.ShopkeeperStorage;
 import com.nisovin.shopkeepers.config.Settings;
 import com.nisovin.shopkeepers.debug.Debug;
@@ -50,6 +56,7 @@ import com.nisovin.shopkeepers.util.java.ThrowableUtils;
 import com.nisovin.shopkeepers.util.java.Validate;
 import com.nisovin.shopkeepers.util.java.VoidCallable;
 import com.nisovin.shopkeepers.util.logging.Log;
+import com.tcoded.folialib.wrapper.task.WrappedTask;
 
 /**
  * Storage responsible for persisting and loading the data of shopkeepers.
@@ -57,7 +64,9 @@ import com.nisovin.shopkeepers.util.logging.Log;
  * Implementation notes:
  * <ul>
  * <li>There can at most be one thread doing file IO at the same time.
- * <li>Saving preparation always happens on the server's main thread. At most one save can be
+ * <li>On Folia, live data is serialized on its owning thread. Immutable snapshots are coordinated
+ * separately and written by a single asynchronous writer.
+ * <li>On other servers, saving preparation happens on the main thread. At most one save can be
  * prepared and processed at the same time.
  * <li>If there is a request for another <b>async</b> save while an async save is already in
  * progress, a flag is set to indicate that another save needs to take place once the current async
@@ -129,11 +138,23 @@ public class SKShopkeeperStorage implements ShopkeeperStorage {
 
 	/* Saving */
 	private final SaveTask saveTask;
+	private final FoliaStorageCoordinator foliaData = new FoliaStorageCoordinator();
+	private final Object foliaSaveLock = new Object();
+	private @Nullable ExecutorService foliaWriter;
+	private @Nullable Future<?> foliaWrite;
+	private boolean foliaSaveQueued;
+	private boolean foliaSaveRequested;
+	private boolean foliaSaveAgain;
+	private boolean foliaSaveDelayed;
+	private long foliaSaveGeneration;
+	private int foliaWrites;
+	private boolean foliaStopping;
+	private boolean foliaStopped;
 	// Flag to (temporarily) turn off saving. This can for example be set if there is an issue with
 	// loading the shopkeeper data, so that the save file doesn't get overwritten by any subsequent
 	// save requests.
-	private boolean savingDisabled = false;
-	private @Nullable BukkitTask delayedSaveTask = null;
+	private volatile boolean savingDisabled = false;
+	private @Nullable WrappedTask delayedSaveTask = null;
 
 	public SKShopkeeperStorage(SKShopkeepersPlugin plugin) {
 		DataVersion.init();
@@ -155,6 +176,16 @@ public class SKShopkeeperStorage implements ShopkeeperStorage {
 	}
 
 	public void onEnable() {
+		if (this.isFolia()) savingDisabled = false;
+		synchronized (foliaSaveLock) {
+			foliaStopping = false;
+			foliaStopped = false;
+			foliaSaveQueued = false;
+			foliaSaveRequested = false;
+			foliaSaveAgain = false;
+			++foliaSaveGeneration;
+		}
+
 		// Start periodic save task:
 		if (!Settings.saveInstantly) {
 			new PeriodicSaveTask().start();
@@ -162,6 +193,29 @@ public class SKShopkeeperStorage implements ShopkeeperStorage {
 	}
 
 	public void onDisable() {
+		if (this.isFolia()) {
+			synchronized (foliaSaveLock) {
+				if (foliaStopping) return;
+				foliaStopping = true;
+				foliaData.close();
+			}
+
+			this.writeFoliaData(true, true);
+			if (foliaData.isDirty()) {
+				Log.warning("Folia storage still has pending changes: "
+						+ foliaData.dirtyCount() + " snapshots/records, "
+						+ foliaData.deletedCount() + " deletions. Last-known data was retained.");
+			}
+
+			synchronized (foliaSaveLock) {
+				foliaStopped = true;
+				if (foliaWriter != null) foliaWriter.shutdown();
+				foliaWriter = null;
+				foliaWrite = null;
+			}
+			return;
+		}
+
 		// Ensure that there is no unsaved data and that all saves are completed before we continue:
 		this.saveIfDirtyAndAwaitCompletion();
 
@@ -201,7 +255,9 @@ public class SKShopkeeperStorage implements ShopkeeperStorage {
 		private static final long PERIOD_TICKS = 6000L; // 5 minutes
 
 		void start() {
-			Bukkit.getScheduler().runTaskTimer(plugin, this, PERIOD_TICKS, PERIOD_TICKS);
+			// The save itself is performed asynchronously (see SaveTask); this periodic trigger runs
+			// on the global thread (which the save coordination requires):
+			SchedulerUtils.runTaskTimerGloballyOrOmit(this, PERIOD_TICKS, PERIOD_TICKS);
 		}
 
 		@Override
@@ -214,18 +270,215 @@ public class SKShopkeeperStorage implements ShopkeeperStorage {
 		return plugin.getShopkeeperRegistry();
 	}
 
+	private boolean isFolia() {
+		return plugin.getFoliaLib().isFolia();
+	}
+
+	public void releaseShopkeeperId(int id) {
+		if (this.isFolia()) foliaData.releaseId(id);
+	}
+
+	private void seedFoliaData() {
+		if (!this.isFolia()) return;
+		for (String key : saveData.getKeys()) {
+			BukkitConfigDataStore entry = BukkitConfigDataStore.ofNewYamlConfig();
+			entry.set(key, saveData.get(key));
+			foliaData.seed(key, entry.saveToString());
+		}
+	}
+
+	private void captureFoliaSnapshot(FoliaStorageCoordinator.Ticket ticket) {
+		if (!foliaData.isCurrent(ticket)) return;
+		AbstractShopkeeper shopkeeper = (AbstractShopkeeper) ticket.owner;
+		if (!shopkeeper.isValid()) return;
+		Entity entity = (shopkeeper.getShopObject() instanceof EntityShopObject)
+				? ((EntityShopObject) shopkeeper.getShopObject()).getEntity() : null;
+		Runnable capture = () -> this.captureFoliaSnapshot(Unsafe.assertNonNull(ticket));
+		if (entity != null) {
+			if (!plugin.getFoliaLib().getScheduler().isOwnedByCurrentRegion(entity)) {
+				SchedulerUtils.runTaskOrOmit(entity, capture);
+				return;
+			}
+		} else if (shopkeeper.isVirtual()) {
+			if (!SchedulerUtils.isGlobalThread()) {
+				SchedulerUtils.runTaskGloballyOrOmit(capture);
+				return;
+			}
+		} else {
+			Location location = shopkeeper.getLocation();
+			if (location == null) {
+				// There is no owner available while the world is unloaded.
+				return;
+			}
+
+			if (!SchedulerUtils.isMainThread(location)) {
+				SchedulerUtils.runTaskOrOmit(location, capture);
+				return;
+			}
+		}
+
+		if (!foliaData.isCurrent(ticket)) return;
+		long version = shopkeeper.getPersistenceVersion();
+		if (version != ticket.version) return;
+		try {
+			BukkitConfigDataStore snapshot = BukkitConfigDataStore.ofNewYamlConfig();
+			ShopkeeperData data = ShopkeeperData.ofNonNull(
+					snapshot.createContainer(String.valueOf(ticket.id)));
+			shopkeeper.save(data, false);
+			data.set(AbstractShopkeeper.ID.getUnvalidatedSaver(), null);
+			String serialized = snapshot.saveToString();
+			if (shopkeeper.getPersistenceVersion() != version) return;
+			if (!foliaData.publish(ticket, serialized)) return;
+			shopkeeper.onSave(version);
+		} catch (Exception e) {
+			Log.warning(shopkeeper.getLogPrefix() + "Snapshot failed! Retaining previous data.", e);
+			return;
+		}
+
+		boolean requested;
+		synchronized (foliaSaveLock) {
+			requested = foliaSaveRequested && !(foliaSaveQueued && foliaSaveDelayed);
+		}
+
+		if (requested) this.queueFoliaSave(0L);
+	}
+
+	private void queueFoliaSave(long delay) {
+		long generation;
+		synchronized (foliaSaveLock) {
+			if (foliaStopping || (foliaSaveQueued && (delay > 0L || !foliaSaveDelayed))) return;
+			foliaSaveRequested = true;
+			foliaSaveQueued = true;
+			foliaSaveDelayed = delay > 0L;
+			generation = ++foliaSaveGeneration;
+		}
+
+		WrappedTask task = SchedulerUtils.runTaskLaterGloballyOrOmit(() -> {
+			synchronized (foliaSaveLock) {
+				if (generation != foliaSaveGeneration) return;
+				foliaSaveQueued = false;
+				if (foliaStopping) return;
+			}
+
+			for (var ticket : foliaData.pendingSnapshots()) {
+				this.captureFoliaSnapshot(Unsafe.assertNonNull(ticket));
+			}
+
+			this.writeFoliaData(false);
+		}, delay);
+		if (task == null) {
+			synchronized (foliaSaveLock) {
+				if (generation == foliaSaveGeneration) foliaSaveQueued = false;
+			}
+		}
+	}
+
+	private String getFoliaHeader() {
+		StringBuilder header = new StringBuilder();
+		for (@Nullable String line : HEADER) {
+			header.append("# ").append(line).append('\n');
+		}
+
+		return header.append('\n').toString();
+	}
+
+	private void writeFoliaData(boolean await) {
+		this.writeFoliaData(await, false);
+	}
+
+	private void writeFoliaData(boolean await, boolean lifecycleFlush) {
+		Future<?> write;
+		synchronized (foliaSaveLock) {
+			if (foliaStopped || (foliaStopping && !lifecycleFlush)) return;
+			if (await) {
+				foliaSaveQueued = false;
+				foliaSaveDelayed = false;
+				foliaSaveAgain = false;
+				++foliaSaveGeneration;
+			}
+
+			if (!await && foliaWrites > 0) {
+				foliaSaveAgain = true;
+				return;
+			}
+
+			if (savingDisabled) {
+				write = foliaWrite;
+			} else {
+				foliaSaveRequested = true;
+				if (foliaWriter == null) {
+					foliaWriter = Executors.newSingleThreadExecutor(runnable -> {
+						Thread thread = new Thread(runnable, "Shopkeepers-storage");
+						thread.setDaemon(true);
+						return thread;
+					});
+				}
+
+				// Submission order and snapshot order must agree, including synchronous callers.
+				var snapshot = foliaData.prepare(this.getFoliaHeader());
+				++foliaWrites;
+				write = Unsafe.assertNonNull(foliaWriter).submit(() -> {
+					boolean succeeded = false;
+					try {
+						succeeded = saveTask.saveToFile(snapshot.data());
+						if (succeeded) foliaData.acknowledge(snapshot);
+					} finally {
+						boolean again;
+						synchronized (foliaSaveLock) {
+							--foliaWrites;
+							again = foliaWrites == 0 && foliaSaveAgain;
+							if (foliaWrites == 0) foliaSaveAgain = false;
+							if (!foliaData.isDirty()) foliaSaveRequested = false;
+						}
+
+						if (!succeeded || again) {
+							this.queueFoliaSave(succeeded ? 0L : DELAYED_SAVE_TICKS);
+						}
+					}
+				});
+				foliaWrite = write;
+			}
+		}
+
+		if (await) this.awaitFoliaWrite(write);
+	}
+
+	private void awaitFoliaWrite(@Nullable Future<?> write) {
+		// Only the writer is awaited. It never needs a server-thread callback.
+		if (write != null) {
+			boolean interrupted = false;
+			try {
+				while (true) {
+					try {
+						write.get();
+						break;
+					} catch (InterruptedException e) {
+						interrupted = true;
+					} catch (ExecutionException e) {
+						Log.severe("Folia storage writer failed!", e.getCause());
+						break;
+					}
+				}
+			} finally {
+				if (interrupted) Thread.currentThread().interrupt();
+			}
+		}
+	}
+
 	// SHOPKEEPER IDs
 
 	/**
 	 * Gets an unused shopkeeper id that can be used for a new shopkeeper.
 	 * <p>
-	 * This does not increment the shopkeeper id counter on its own, because we do not want to
-	 * increment it in case the shopkeeper creation fails. Use {@link #onShopkeeperIdUsed(int)} once
-	 * the id is actually being used.
+	 * On Folia this reserves the id. Release failed creations via {@link #releaseShopkeeperId(int)}.
+	 * On other servers this does not increment the id counter on its own.
+	 * Use {@link #onShopkeeperIdUsed(int)} once the id is actually being used.
 	 * 
 	 * @return the next unused shopkeeper id
 	 */
 	public int getNextShopkeeperId() {
+		if (this.isFolia()) return foliaData.reserveId();
+
 		int nextId = nextShopkeeperId; // Can end up negative after increments due to overflows
 		if (nextId <= 0 || !this.isUnusedId(nextId)) {
 			// Try to use an id larger than the max currently used id:
@@ -318,6 +571,11 @@ public class SKShopkeeperStorage implements ShopkeeperStorage {
 	 *            the shopkeeper id
 	 */
 	public void onShopkeeperIdUsed(int id) {
+		if (this.isFolia()) {
+			foliaData.useId(id);
+			return;
+		}
+
 		if (id > maxUsedShopkeeperId) {
 			maxUsedShopkeeperId = id;
 		}
@@ -363,6 +621,7 @@ public class SKShopkeeperStorage implements ShopkeeperStorage {
 	 */
 	private void clearSaveData() {
 		saveData.clear();
+		if (this.isFolia()) foliaData.reset();
 		maxUsedShopkeeperId = 0;
 		nextShopkeeperId = 1;
 	}
@@ -370,6 +629,10 @@ public class SKShopkeeperStorage implements ShopkeeperStorage {
 	// Returns true on success, and false if there was some severe issue during loading.
 	// This is blocking and will wait for any currently ongoing or pending saves to complete!
 	public boolean reload() {
+		if (this.isFolia() && !this.getShopkeeperRegistry().getAllShopkeepers().isEmpty()) {
+			throw new IllegalStateException("Folia storage reload requires unloaded shopkeepers.");
+		}
+
 		if (currentlyLoading) {
 			throw new IllegalStateException("Already loading right now!");
 		}
@@ -420,6 +683,7 @@ public class SKShopkeeperStorage implements ShopkeeperStorage {
 				// No save file exists yet -> No shopkeeper data available.
 				// We silently set up the data version and abort:
 				saveData.set(DATA_VERSION_KEY, DataVersion.current().toString());
+				this.seedFoliaData();
 				return true;
 			}
 		}
@@ -549,6 +813,7 @@ public class SKShopkeeperStorage implements ShopkeeperStorage {
 		if (shopkeepersCount == 0) {
 			// No shopkeeper data exists yet. Silently update the data version and abort:
 			saveData.set(DATA_VERSION_KEY, DataVersion.current().toString());
+			this.seedFoliaData();
 			return true;
 		}
 
@@ -576,6 +841,7 @@ public class SKShopkeeperStorage implements ShopkeeperStorage {
 			this.requestSave();
 		}
 
+		this.seedFoliaData();
 		for (String key : keys) {
 			if (key.equals(DATA_VERSION_KEY)) continue; // Skip the data version entry
 
@@ -679,6 +945,8 @@ public class SKShopkeeperStorage implements ShopkeeperStorage {
 	// currently process.
 	@Override
 	public boolean isDirty() {
+		if (this.isFolia()) return foliaData.isDirty();
+
 		assert !saveTask.isPostProcessing();
 
 		// Explicit save request pending:
@@ -714,6 +982,11 @@ public class SKShopkeeperStorage implements ShopkeeperStorage {
 	 */
 	public void deleteShopkeeper(AbstractShopkeeper shopkeeper) {
 		Validate.notNull(shopkeeper, "shopkeeper is null");
+		if (this.isFolia()) {
+			foliaData.delete(shopkeeper.getId());
+			return;
+		}
+
 		// If the save task is currently running (and not in its synchronous post-processing
 		// callback), we defer the deletion of the shopkeeper's data:
 		if (saveTask.isRunning() && !saveTask.isPostProcessing()) {
@@ -761,6 +1034,8 @@ public class SKShopkeeperStorage implements ShopkeeperStorage {
 	 * @return the number of unsaved deleted shopkeepers
 	 */
 	public int getUnsavedDeletedShopkeepersCount() {
+		if (this.isFolia()) return foliaData.deletedCount();
+
 		return unsavedDeletedShopkeepers.size() + shopkeepersToDelete.size();
 	}
 
@@ -774,6 +1049,26 @@ public class SKShopkeeperStorage implements ShopkeeperStorage {
 	public void markDirty(AbstractShopkeeper shopkeeper) {
 		Validate.notNull(shopkeeper, "shopkeeper is null");
 		Validate.isTrue(shopkeeper.isValid(), "shopkeeper is invalid");
+		if (this.isFolia()) {
+			int id = shopkeeper.getId();
+			long version = shopkeeper.getPersistenceVersion();
+			FoliaStorageCoordinator.@Nullable Ticket ticket;
+			boolean stopping;
+			synchronized (foliaSaveLock) {
+				stopping = foliaStopping;
+				ticket = stopping ? null : foliaData.markDirty(id, shopkeeper, version);
+			}
+
+			if (stopping) {
+				Log.warning(shopkeeper.getLogPrefix()
+						+ "Persistence notification rejected after snapshot collection stopped.");
+				return;
+			}
+
+			if (ticket != null) this.captureFoliaSnapshot(Unsafe.assertNonNull(ticket));
+			return;
+		}
+
 		assert !unsavedDeletedShopkeepers.contains(shopkeeper.getId());
 		assert !shopkeepersToDelete.contains(shopkeeper);
 		dirtyShopkeepers.add(shopkeeper);
@@ -796,6 +1091,8 @@ public class SKShopkeeperStorage implements ShopkeeperStorage {
 	 * @return the number of shopkeeper with unsaved changes to their data
 	 */
 	public int getUnsavedDirtyShopkeepersCount() {
+		if (this.isFolia()) return foliaData.dirtyCount();
+
 		int count = dirtyShopkeepers.size() + unsavedShopkeepers.size();
 		if (saveTask.isRunning()) {
 			// These Sets of shopkeepers might overlap, so we need to avoid counting their common
@@ -833,6 +1130,11 @@ public class SKShopkeeperStorage implements ShopkeeperStorage {
 	}
 
 	private void requestSave() {
+		if (this.isFolia()) {
+			foliaData.requestSave();
+			return;
+		}
+
 		pendingSaveRequest = true;
 	}
 
@@ -848,6 +1150,11 @@ public class SKShopkeeperStorage implements ShopkeeperStorage {
 	@Override
 	public void saveDelayed() {
 		this.requestSave();
+		if (this.isFolia()) {
+			if (Settings.saveInstantly) this.queueFoliaSave(DELAYED_SAVE_TICKS);
+			return;
+		}
+
 		if (Settings.saveInstantly && delayedSaveTask == null) {
 			new DelayedSaveTask().start();
 		} // Else: The periodic save task will trigger a save at some point.
@@ -857,7 +1164,7 @@ public class SKShopkeeperStorage implements ShopkeeperStorage {
 
 		void start() {
 			assert delayedSaveTask == null;
-			delayedSaveTask = SchedulerUtils.runTaskLaterOrOmit(plugin, this, DELAYED_SAVE_TICKS);
+			delayedSaveTask = SchedulerUtils.runTaskLaterGloballyOrOmit(this, DELAYED_SAVE_TICKS);
 		}
 
 		@Override
@@ -879,6 +1186,19 @@ public class SKShopkeeperStorage implements ShopkeeperStorage {
 
 	@Override
 	public void saveIfDirtyAndAwaitCompletion() {
+		if (this.isFolia()) {
+			if (this.isDirty()) {
+				this.saveImmediate();
+			} else {
+				Future<?> write;
+				synchronized (foliaSaveLock) {
+					write = foliaWrite;
+				}
+				this.awaitFoliaWrite(write);
+			}
+			return;
+		}
+
 		if (this.isDirty()) {
 			this.saveImmediate();
 		} else {
@@ -887,6 +1207,24 @@ public class SKShopkeeperStorage implements ShopkeeperStorage {
 	}
 
 	private void doSave(boolean async) {
+		if (this.isFolia()) {
+			this.requestSave();
+			if (async) {
+				this.queueFoliaSave(0L);
+			} else {
+				for (var ticket : foliaData.pendingSnapshots()) {
+					this.captureFoliaSnapshot(Unsafe.assertNonNull(ticket));
+				}
+
+				this.writeFoliaData(true);
+				if (foliaData.pendingSnapshots().length > 0) {
+					Log.warning("Synchronous Folia save retained last-known data for "
+							+ foliaData.pendingSnapshots().length + " pending owner snapshots.");
+				}
+			}
+			return;
+		}
+
 		if (savingDisabled) {
 			Log.warning("Skipping save, because saving got disabled.");
 			return;
@@ -1024,6 +1362,15 @@ public class SKShopkeeperStorage implements ShopkeeperStorage {
 					);
 				}
 
+				return this.saveToFile(data);
+			} catch (Exception e) {
+				Log.severe("Saving of shopkeepers failed! Data might have been lost! :(", e);
+				return false;
+			}
+		}
+
+		private boolean saveToFile(String data) {
+			try {
 				Retry.retry((VoidCallable) () -> {
 					this.doSaveToFile(data);
 				}, SAVING_MAX_ATTEMPTS, (attemptNumber, exception, retry) -> {

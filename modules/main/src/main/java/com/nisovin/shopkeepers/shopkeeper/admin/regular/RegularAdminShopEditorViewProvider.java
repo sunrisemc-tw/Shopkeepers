@@ -74,6 +74,14 @@ public class RegularAdminShopEditorViewProvider extends ShopkeeperEditorViewProv
 		// Copying the selected items into the editor.
 		@Override
 		protected void handleInvalidTradingRecipe(Player player, TradingRecipeDraft invalidRecipe) {
+			var plugin = com.nisovin.shopkeepers.SKShopkeepersPlugin.getInstance();
+			if (plugin.getFoliaLib().isFolia()
+					&& !plugin.getFoliaLib().getScheduler().isOwnedByCurrentRegion(player)) {
+				plugin.getShopkeeperRegistry().runOnSender(
+						player, () -> this.handleInvalidTradingRecipe(player, invalidRecipe));
+				return;
+			}
+
 			// Return unused items to the player's inventory:
 			// Inventory#addItem might modify the stack sizes of the input items, so we need to copy
 			// them.

@@ -1,9 +1,8 @@
 package com.nisovin.shopkeepers.commands;
 
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
-import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.ProxiedCommandSender;
 import org.bukkit.entity.Player;
@@ -11,23 +10,25 @@ import org.bukkit.plugin.Plugin;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import com.nisovin.shopkeepers.lang.Messages;
+import com.nisovin.shopkeepers.util.bukkit.SchedulerUtils;
 import com.nisovin.shopkeepers.util.bukkit.TextUtils;
 import com.nisovin.shopkeepers.util.java.Validate;
+import com.tcoded.folialib.wrapper.task.WrappedTask;
 
 public class Confirmations {
 
 	private static class PendingConfirmation {
 
 		private final Runnable action;
-		private final int taskId;
+		private final @Nullable WrappedTask task;
 
-		public PendingConfirmation(Runnable action, int taskId) {
-			this.taskId = taskId;
+		public PendingConfirmation(Runnable action, @Nullable WrappedTask task) {
+			this.task = task;
 			this.action = action;
 		}
 
-		public int getTaskId() {
-			return taskId;
+		public @Nullable WrappedTask getTask() {
+			return task;
 		}
 
 		public Runnable getAction() {
@@ -40,7 +41,7 @@ public class Confirmations {
 	private final Plugin plugin;
 	// The type of key that is used to track pending confirmations depends on the type of
 	// CommandSender.
-	private final Map<Object, PendingConfirmation> pendingConfirmations = new HashMap<>();
+	private final Map<Object, PendingConfirmation> pendingConfirmations = new ConcurrentHashMap<>();
 
 	public Confirmations(Plugin plugin) {
 		this.plugin = plugin;
@@ -85,18 +86,33 @@ public class Confirmations {
 		Validate.notNull(action, "action is null");
 		Validate.isTrue(timeoutTicks > 0, "timeoutTicks has to be positive");
 
-		int taskId = Bukkit.getScheduler().runTaskLater(plugin, () -> {
-			this.endConfirmation(sender);
-			TextUtils.sendMessage(sender, Messages.confirmationExpired);
-		}, timeoutTicks).getTaskId();
+		Object key = this.getSenderKey(sender);
+		// Holder so the timeout only ends its own confirmation, not a replacement that was
+		// registered in the meantime (possibly from another region thread on Folia):
+		PendingConfirmation[] holder = new PendingConfirmation[1];
+		Runnable timeoutAction = () -> {
+			if (pendingConfirmations.remove(key, holder[0])) {
+				TextUtils.sendMessage(sender, Messages.confirmationExpired);
+			}
+		};
+		// The timeout is run on the region that owns the sender (the player's region for players), or
+		// on the global thread for non-player senders (console, command blocks, etc.):
+		WrappedTask task;
+		if (sender instanceof Player) {
+			task = SchedulerUtils.runTaskLaterOrOmit((Player) sender, timeoutAction, timeoutTicks);
+		} else {
+			task = SchedulerUtils.runTaskLaterGloballyOrOmit(timeoutAction, timeoutTicks);
+		}
 
-		PendingConfirmation previousPendingConfirmation = pendingConfirmations.put(
-				this.getSenderKey(sender),
-				new PendingConfirmation(action, taskId)
-		);
+		PendingConfirmation pendingConfirmation = new PendingConfirmation(action, task);
+		holder[0] = pendingConfirmation;
+		PendingConfirmation previousPendingConfirmation = pendingConfirmations.put(key, pendingConfirmation);
 		if (previousPendingConfirmation != null) {
 			// Cancel the previous pending confirmation task:
-			Bukkit.getScheduler().cancelTask(previousPendingConfirmation.getTaskId());
+			WrappedTask previousTask = previousPendingConfirmation.getTask();
+			if (previousTask != null) {
+				previousTask.cancel();
+			}
 		}
 	}
 
@@ -106,7 +122,10 @@ public class Confirmations {
 		PendingConfirmation pendingConfirmation = pendingConfirmations.remove(this.getSenderKey(sender));
 		if (pendingConfirmation != null) {
 			// End confirmation task:
-			Bukkit.getScheduler().cancelTask(pendingConfirmation.getTaskId());
+			WrappedTask task = pendingConfirmation.getTask();
+			if (task != null) {
+				task.cancel();
+			}
 
 			// Return action:
 			return pendingConfirmation.getAction();

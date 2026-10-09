@@ -1,0 +1,6 @@
+name: ShopkeepersSignMoveProbe
+version: 1.0
+main: harness.SignMoveProbe
+api-version: "1.21"
+folia-supported: true
+depend: [Shopkeepers]

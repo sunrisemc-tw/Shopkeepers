@@ -79,7 +79,17 @@ public class Timer implements Timings {
 		started = false;
 		paused = false;
 
-		// Update the timings:
+		this.record(elapsedTimeNanos);
+	}
+
+	/**
+	 * Records an independent completed duration. This operation and the statistics accessors are
+	 * thread-safe; the start, pause, resume, and stop state still requires a single timing thread.
+	 * 
+	 * @param elapsedTimeNanos
+	 *            the elapsed time in nanoseconds
+	 */
+	public synchronized void record(long elapsedTimeNanos) {
 		counter++;
 		totalTimeNanos += elapsedTimeNanos;
 
@@ -92,25 +102,25 @@ public class Timer implements Timings {
 	// TIMINGS
 
 	@Override
-	public void reset() {
+	public synchronized void reset() {
 		counter = 0L;
 		totalTimeNanos = 0L;
 		maxTimeNanos = 0L;
 	}
 
 	@Override
-	public long getCounter() {
+	public synchronized long getCounter() {
 		return counter;
 	}
 
 	@Override
-	public double getAverageTimeMillis() {
+	public synchronized double getAverageTimeMillis() {
 		double avgTimeNanos = (double) totalTimeNanos / (counter == 0L ? 1L : counter);
 		return TimeUtils.convert(avgTimeNanos, TimeUnit.NANOSECONDS, TimeUnit.MILLISECONDS);
 	}
 
 	@Override
-	public double getMaxTimeMillis() {
+	public synchronized double getMaxTimeMillis() {
 		return TimeUtils.convert(maxTimeNanos, TimeUnit.NANOSECONDS, TimeUnit.MILLISECONDS);
 	}
 }

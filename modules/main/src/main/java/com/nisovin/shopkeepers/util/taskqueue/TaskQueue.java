@@ -3,14 +3,14 @@ package com.nisovin.shopkeepers.util.taskqueue;
 import java.util.ArrayDeque;
 import java.util.Queue;
 
-import org.bukkit.Bukkit;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitScheduler;
-import org.bukkit.scheduler.BukkitTask;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import com.nisovin.shopkeepers.util.bukkit.SchedulerUtils;
 import com.nisovin.shopkeepers.util.java.Validate;
+import com.tcoded.folialib.wrapper.task.WrappedTask;
 
 /**
  * A {@link BukkitScheduler} task that processes a queue of work units.
@@ -67,9 +67,10 @@ public abstract class TaskQueue<@NonNull T> implements TaskQueueStatistics {
 	private final Plugin plugin;
 	private final int taskPeriodTicks;
 	private final int workUnitsPerExecution;
+	private final Object queueLock = new Object();
 	private final Queue<@NonNull T> pending = new ArrayDeque<>();
-	private int maxPending = 0;
-	private @Nullable BukkitTask task = null;
+	private volatile int maxPending = 0;
+	private @Nullable WrappedTask task = null;
 
 	/**
 	 * Creates a new {@link TaskQueue}.
@@ -105,11 +106,14 @@ public abstract class TaskQueue<@NonNull T> implements TaskQueueStatistics {
 	 * This stops the task and clears the queue of pending work units without processing them.
 	 */
 	public void shutdown() {
-		// Invoke removal callbacks for all pending work units:
-		pending.forEach(this::onRemoval);
-		pending.clear();
 		this.stopTask();
-		maxPending = 0;
+		Queue<@NonNull T> removed;
+		synchronized (queueLock) {
+			removed = new ArrayDeque<>(pending);
+			pending.clear();
+			maxPending = 0;
+		}
+		removed.forEach(this::onRemoval);
 	}
 
 	// WORK UNITS
@@ -122,16 +126,11 @@ public abstract class TaskQueue<@NonNull T> implements TaskQueueStatistics {
 	 */
 	public void add(@NonNull T workUnit) {
 		assert workUnit != null; // Also checked by queue already
-		pending.add(workUnit);
-
-		// Update max pending:
-		int size = pending.size();
-		if (size > maxPending) {
-			maxPending = size;
+		synchronized (queueLock) {
+			this.onAdded(workUnit);
+			pending.add(workUnit);
+			maxPending = Math.max(maxPending, pending.size());
 		}
-
-		// Callback for subclasses:
-		this.onAdded(workUnit);
 	}
 
 	/**
@@ -151,9 +150,10 @@ public abstract class TaskQueue<@NonNull T> implements TaskQueueStatistics {
 	 */
 	public void remove(@NonNull T workUnit) {
 		assert workUnit != null; // Also checked by queue already
-		if (pending.remove(workUnit)) {
-			// Callback for subclasses:
-			this.onRemoval(workUnit);
+		synchronized (queueLock) {
+			if (pending.remove(workUnit)) {
+				this.onRemoval(workUnit);
+			}
 		}
 	}
 
@@ -171,7 +171,9 @@ public abstract class TaskQueue<@NonNull T> implements TaskQueueStatistics {
 
 	@Override
 	public int getPendingCount() {
-		return pending.size();
+		synchronized (queueLock) {
+			return pending.size();
+		}
 	}
 
 	@Override
@@ -188,7 +190,9 @@ public abstract class TaskQueue<@NonNull T> implements TaskQueueStatistics {
 		}
 
 		// Start new task:
-		task = Bukkit.getScheduler().runTaskTimer(plugin, this.createTask(), 1, taskPeriodTicks);
+		// The queue driver runs on the global thread; subclasses dispatch per-item work onto the
+		// appropriate region (see ShopkeeperSpawnQueue).
+		task = SchedulerUtils.runTaskTimerGloballyOrOmit(this.createTask(), 1, taskPeriodTicks);
 	}
 
 	private void stopTask() {
@@ -212,15 +216,12 @@ public abstract class TaskQueue<@NonNull T> implements TaskQueueStatistics {
 	}
 
 	private void execute() {
-		// Skip the whole loop if there are no pending work units:
-		Queue<@NonNull T> queue = pending;
-		if (queue.isEmpty()) {
-			return;
-		}
-
 		int localWorkUnitsPerExecution = workUnitsPerExecution;
 		for (int i = 0; i < localWorkUnitsPerExecution; ++i) {
-			@Nullable T workUnit = queue.poll();
+			@Nullable T workUnit;
+			synchronized (queueLock) {
+				workUnit = pending.poll();
+			}
 			if (workUnit == null) {
 				// The queue is empty:
 				return;
