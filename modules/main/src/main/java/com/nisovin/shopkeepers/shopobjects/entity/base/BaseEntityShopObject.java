@@ -160,6 +160,15 @@ public abstract class BaseEntityShopObject<E extends Entity>
 	}
 
 	private Location prepareSpawnLocation(Location spawnLocation) {
+		// Normalize to the block corner first: Callers may pass either block corner coordinates
+		// (initial spawn, via the shopkeeper's stored block location) or already centered
+		// coordinates (Folia moves, via the placement's block center location). Flooring here
+		// ensures the centering below is not applied twice and the entity ends up centered within
+		// its block rather than offset into a neighboring block.
+		spawnLocation.setX(spawnLocation.getBlockX());
+		spawnLocation.setY(spawnLocation.getBlockY());
+		spawnLocation.setZ(spawnLocation.getBlockZ());
+
 		spawnLocation.add(0.5D, 0.0D, 0.5D); // Center of block
 
 		if (this.shallAdjustSpawnLocation()) {
